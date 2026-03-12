@@ -1,0 +1,76 @@
+// LANDMAN Database Schema Diagram
+// DBML — https://dbml.dbdiagram.io
+// All geometry columns use SRID 4326 (WGS84)
+
+Table properties {
+  id          uuid        [pk]
+  name        text        [not null]
+  owner       text
+  boundary    geometry    [note: "POLYGON, 4326"]
+  created_at  timestamp
+}
+
+Table areas {
+  id          uuid        [pk]
+  property_id uuid        [not null, ref: > properties.id]
+  name        text        [not null]
+  type        text        [not null, note: "paddock | grazing_block | habitat_zone | other"]
+  boundary    geometry    [note: "POLYGON, 4326"]
+  notes       text
+  created_at  timestamp
+}
+
+Table linear_assets {
+  id          uuid        [pk]
+  property_id uuid        [not null, ref: > properties.id]
+  name        text
+  type        text        [not null, note: "fence | road | pipeline | watercourse | other"]
+  geom        geometry    [note: "LINESTRING, 4326"]
+  condition   text        [note: "good | fair | poor | damaged"]
+  notes       text
+  created_at  timestamp
+}
+
+Table point_assets {
+  id          uuid        [pk]
+  property_id uuid        [not null, ref: > properties.id]
+  name        text
+  type        text        [not null, note: "borehole | tank | kraal | gate | sensor | other"]
+  geom        geometry    [note: "POINT, 4326"]
+  condition   text        [note: "good | fair | poor | damaged"]
+  notes       text
+  created_at  timestamp
+}
+
+Table operations {
+  id          uuid        [pk]
+  property_id uuid        [not null, ref: > properties.id]
+  name        text        [not null]
+  type        text        [not null, note: "vaccination | fencing | inspection | patrol | other"]
+  started_at  timestamp
+  ended_at    timestamp
+  notes       text
+  created_at  timestamp
+}
+
+Table observations {
+  id           uuid        [pk]
+  property_id  uuid        [not null, ref: > properties.id]
+  operation_id uuid        [ref: > operations.id]
+  geom         geometry    [note: "POINT, 4326"]
+  observed_at  timestamp   [not null]
+  type         text        [note: "grass_condition | erosion | fence_damage | livestock_presence | other"]
+  notes        text
+  tags         text[]
+  created_at   timestamp
+}
+
+Table media {
+  id             uuid        [pk]
+  observation_id uuid        [ref: > observations.id]
+  file_path      text        [not null]
+  type           text        [note: "image | video"]
+  geom           geometry    [note: "POINT, 4326 — from EXIF"]
+  captured_at    timestamp
+  created_at     timestamp
+}
