@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { POINT_TYPES } from '../constants/pointTypes'
 import { api } from '../api'
 
@@ -18,10 +18,12 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
   const [type, setType]           = useState(data.type || '')
   const [condition, setCondition] = useState(data.condition || '')
   const [notes, setNotes]         = useState(data.notes || '')
-  const [saving, setSaving]       = useState(false)
+  const [saving, setSaving]           = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [deleting, setDeleting]   = useState(false)
-  const [dirty, setDirty]         = useState(false)
+  const [deleteReady, setDeleteReady] = useState(false)   // true after 2s hold
+  const [deleting, setDeleting]       = useState(false)
+  const [dirty, setDirty]             = useState(false)
+  const deleteTimerRef                = useRef(null)
 
   // Reset form whenever the selected feature changes
   useEffect(() => {
@@ -32,7 +34,21 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
     setNotes(data.notes || '')
     setDirty(false)
     setConfirmDelete(false)
+    setDeleteReady(false)
+    clearTimeout(deleteTimerRef.current)
   }, [data.id])
+
+  // Start 2-second hold timer when confirm is shown
+  useEffect(() => {
+    if (confirmDelete) {
+      setDeleteReady(false)
+      deleteTimerRef.current = setTimeout(() => setDeleteReady(true), 2000)
+    } else {
+      setDeleteReady(false)
+      clearTimeout(deleteTimerRef.current)
+    }
+    return () => clearTimeout(deleteTimerRef.current)
+  }, [confirmDelete])
 
   const mark = () => setDirty(true)
 
@@ -66,6 +82,8 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
   }
 
   const handleDelete = async () => {
+    if (!data.id) { alert('Cannot delete: missing ID.'); return }
+    if (!deleteReady) return  // button not yet active
     setDeleting(true)
     try {
       if (featureType === 'property')   await api.deleteProperty(data.id)
@@ -161,8 +179,14 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
           </button>
         ) : (
           <div style={styles.confirmRow}>
-            <span style={styles.confirmText}>Sure? This cannot be undone.</span>
-            <button style={styles.confirmYes} onClick={handleDelete} disabled={deleting}>
+            <span style={styles.confirmText}>
+              {deleteReady ? 'Ready — click to confirm.' : 'Hold on… (2s safety delay)'}
+            </span>
+            <button
+              style={{ ...styles.confirmYes, opacity: deleteReady ? 1 : 0.35, cursor: deleteReady ? 'pointer' : 'not-allowed' }}
+              onClick={handleDelete}
+              disabled={deleting || !deleteReady}
+            >
               {deleting ? '…' : 'Yes, delete'}
             </button>
             <button style={styles.confirmNo} onClick={() => setConfirmDelete(false)}>

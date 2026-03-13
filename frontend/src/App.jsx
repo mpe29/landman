@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import Map from './components/Map'
 import Toolbar from './components/Toolbar'
+import LayerControl from './components/LayerControl'
 import DrawAreaModal from './components/DrawAreaModal'
 import DrawPointModal from './components/DrawPointModal'
 import FeaturePanel from './components/FeaturePanel'
 import { api } from './api'
 import { POINT_DRAW_MODES, pointTypeFromMode } from './constants/pointTypes'
+import { DEFAULT_VISIBILITY } from './constants/layers'
 
 const AREA_DRAW_MODES = new Set(['draw_property', 'draw_farm', 'draw_camp'])
 
@@ -16,6 +18,10 @@ export default function App() {
   const [saving, setSaving]               = useState(false)
   const [loadedData, setLoadedData]       = useState({ properties: [], farms: [], camps: [] })
   const [selectedFeature, setSelectedFeature] = useState(null) // { featureType, data }
+  const [layerVisibility, setLayerVisibility] = useState(DEFAULT_VISIBILITY)
+
+  const handleLayerToggle = (id, visible) =>
+    setLayerVisibility((prev) => ({ ...prev, [id]: visible }))
 
   const reload = () => setReloadKey((k) => k + 1)
 
@@ -93,12 +99,15 @@ export default function App() {
       <Map
         mode={mode}
         reloadKey={reloadKey}
+        layerVisibility={layerVisibility}
         onDrawComplete={handleDrawComplete}
         onDataLoaded={handleDataLoaded}
         onFeatureClick={handleFeatureClick}
       />
 
       <Toolbar mode={mode} onModeChange={handleModeChange} />
+
+      <LayerControl visibility={layerVisibility} onChange={handleLayerToggle} />
 
       {/* Area draw modal */}
       {pendingGeometry && isAreaDraw && (

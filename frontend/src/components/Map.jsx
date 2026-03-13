@@ -5,21 +5,56 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css'
 import { api } from '../api'
 import { POINT_TYPES, POINT_DRAW_MODES } from '../constants/pointTypes'
+import { ACTIVE_LAYERS } from '../constants/layers'
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN
 
-const AREA_STYLE = {
-  properties: { fill: '#4ade80', opacity: 0.10, line: '#4ade80', width: 2.5 },
-  farms:      { fill: '#fbbf24', opacity: 0.12, line: '#fbbf24', width: 1.8 },
-  camps:      { fill: '#60a5fa', opacity: 0.12, line: '#60a5fa', width: 1.2 },
+// Build a Mapbox match expression for point asset type → color
+const POINT_COLOR_EXPR = [
+  'match', ['get', 'type'],
+  ...POINT_TYPES.flatMap((pt) => [pt.id, pt.color]),
+  '#94a3b8', // fallback
+]
+
+// Fetch all spatial data and partition into layer buckets
+async function loadAllData() {
+  const [properties, areas, pointAssets] = await Promise.all([
+    api.getProperties(),
+    api.getAreas(),
+    api.getPointAssets(),
+  ])
+  return {
+    properties,
+    farms:        areas.filter((a) => a.level === 'farm'),
+    camps:        areas.filter((a) => a.level === 'camp'),
+    point_assets: pointAssets,
+  }
 }
 
-export default function Map({ mode, reloadKey, onDrawComplete, onDataLoaded, onFeatureClick }) {
+// Convert DB rows to GeoJSON FeatureCollection
+function toFC(items, geomKey = 'boundary') {
+  return {
+    type: 'FeatureCollection',
+    features: items
+      .filter((x) => x[geomKey])
+      .map((x) => ({
+        type: 'Feature',
+        geometry: x[geomKey],
+        // Spread all non-geometry fields into properties so FeaturePanel gets them
+        properties: Object.fromEntries(
+          Object.entries(x).filter(([k]) => k !== geomKey && k !== 'boundary')
+        ),
+      })),
+  }
+}
+
+export default function Map({ mode, reloadKey, layerVisibility, onDrawComplete, onDataLoaded, onFeatureClick }) {
   const mapContainer = useRef(null)
-  const map = useRef(null)
-  const draw = useRef(null)
+  const map          = useRef(null)
+  const draw         = useRef(null)
   const [ready, setReady] = useState(false)
 
+  // ── Init map & draw once ───────────────────────────────────────
   useEffect(() => {
     if (map.current) return
 
@@ -35,45 +70,64 @@ export default function Map({ mode, reloadKey, onDrawComplete, onDataLoaded, onF
     map.current.addControl(new mapboxgl.NavigationControl(), 'top-right')
 
     map.current.on('load', () => {
-      // Polygon layers (z-order: property → farm → camp)
-      Object.entries(AREA_STYLE).forEach(([id, cfg]) => {
-        map.current.addSource(id, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-        map.current.addLayer({ id: `${id}-fill`, type: 'fill', source: id, paint: { 'fill-color': cfg.fill, 'fill-opacity': cfg.opacity } })
-        map.current.addLayer({ id: `${id}-outline`, type: 'line', source: id, paint: { 'line-color': cfg.line, 'line-width': cfg.width } })
-        map.current.on('click', `${id}-fill`, (e) => {
-          const feat = e.features[0]
-          onFeatureClick?.({ featureType: id === 'properties' ? 'property' : 'area', data: feat.properties })
+      // Create sources + layers for every active layer in the registry
+      ACTIVE_LAYERS.forEach((layer) => {
+        map.current.addSource(layer.id, {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
         })
-        map.current.on('mouseenter', `${id}-fill`, () => { map.current.getCanvas().style.cursor = 'pointer' })
-        map.current.on('mouseleave', `${id}-fill`, () => { map.current.getCanvas().style.cursor = '' })
+
+        if (layer.type === 'polygon') {
+          map.current.addLayer({
+            id:     `${layer.id}-fill`,
+            type:   'fill',
+            source: layer.id,
+            layout: { visibility: layer.defaultVisible ? 'visible' : 'none' },
+            paint:  { 'fill-color': layer.color, 'fill-opacity': layer.fillOpacity },
+          })
+          map.current.addLayer({
+            id:     `${layer.id}-outline`,
+            type:   'line',
+            source: layer.id,
+            layout: { visibility: layer.defaultVisible ? 'visible' : 'none' },
+            paint:  { 'line-color': layer.color, 'line-width': layer.lineWidth },
+          })
+          // Clicks on fill layer
+          map.current.on('click', `${layer.id}-fill`, (e) => {
+            onFeatureClick?.({ featureType: layer.featureType, data: e.features[0].properties })
+          })
+          map.current.on('mouseenter', `${layer.id}-fill`, () => { map.current.getCanvas().style.cursor = 'pointer' })
+          map.current.on('mouseleave', `${layer.id}-fill`, () => { map.current.getCanvas().style.cursor = '' })
+
+        } else if (layer.type === 'point') {
+          map.current.addLayer({
+            id:     `${layer.id}-circle`,
+            type:   'circle',
+            source: layer.id,
+            layout: { visibility: layer.defaultVisible ? 'visible' : 'none' },
+            paint:  {
+              'circle-radius':        layer.circleRadius ?? 7,
+              'circle-color':         layer.color === 'multi' ? POINT_COLOR_EXPR : layer.color,
+              'circle-stroke-color':  '#fff',
+              'circle-stroke-width':  1.5,
+            },
+          })
+          map.current.on('click', `${layer.id}-circle`, (e) => {
+            onFeatureClick?.({ featureType: layer.featureType, data: e.features[0].properties })
+          })
+          map.current.on('mouseenter', `${layer.id}-circle`, () => { map.current.getCanvas().style.cursor = 'pointer' })
+          map.current.on('mouseleave', `${layer.id}-circle`, () => { map.current.getCanvas().style.cursor = '' })
+
+        } else if (layer.type === 'line') {
+          map.current.addLayer({
+            id:     `${layer.id}-line`,
+            type:   'line',
+            source: layer.id,
+            layout: { visibility: layer.defaultVisible ? 'visible' : 'none' },
+            paint:  { 'line-color': layer.color, 'line-width': layer.lineWidth },
+          })
+        }
       })
-
-      // Point asset layer — one source with expression-based colors
-      map.current.addSource('point_assets', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-
-      // Build a match expression for per-type colors
-      const colorMatch = ['match', ['get', 'type']]
-      POINT_TYPES.forEach((pt) => colorMatch.push(pt.id, pt.color))
-      colorMatch.push('#94a3b8') // default fallback
-
-      map.current.addLayer({
-        id: 'point_assets-circle',
-        type: 'circle',
-        source: 'point_assets',
-        paint: {
-          'circle-radius': 7,
-          'circle-color': colorMatch,
-          'circle-stroke-color': '#fff',
-          'circle-stroke-width': 1.5,
-        },
-      })
-
-      map.current.on('click', 'point_assets-circle', (e) => {
-        const feat = e.features[0]
-        onFeatureClick?.({ featureType: 'point_asset', data: feat.properties })
-      })
-      map.current.on('mouseenter', 'point_assets-circle', () => { map.current.getCanvas().style.cursor = 'pointer' })
-      map.current.on('mouseleave', 'point_assets-circle', () => { map.current.getCanvas().style.cursor = '' })
 
       setReady(true)
     })
@@ -84,7 +138,24 @@ export default function Map({ mode, reloadKey, onDrawComplete, onDataLoaded, onF
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Activate / deactivate draw mode
+  // ── Sync layer visibility from props ──────────────────────────
+  useEffect(() => {
+    if (!ready || !layerVisibility) return
+    ACTIVE_LAYERS.forEach((layer) => {
+      const vis = layerVisibility[layer.id] !== false ? 'visible' : 'none'
+      const mapLayerIds =
+        layer.type === 'polygon' ? [`${layer.id}-fill`, `${layer.id}-outline`]
+        : layer.type === 'point' ? [`${layer.id}-circle`]
+        : [`${layer.id}-line`]
+      mapLayerIds.forEach((lid) => {
+        if (map.current.getLayer(lid)) {
+          map.current.setLayoutProperty(lid, 'visibility', vis)
+        }
+      })
+    })
+  }, [ready, layerVisibility])
+
+  // ── Activate / deactivate draw mode ───────────────────────────
   useEffect(() => {
     if (!ready || !draw.current) return
     const isPoint = POINT_DRAW_MODES.has(mode)
@@ -99,39 +170,36 @@ export default function Map({ mode, reloadKey, onDrawComplete, onDataLoaded, onF
     }
   }, [mode, ready])
 
-  // Load / reload all spatial data
+  // ── Load / reload all spatial data ────────────────────────────
   useEffect(() => {
     if (!ready) return
 
-    Promise.all([api.getProperties(), api.getAreas(), api.getPointAssets()]).then(([properties, areas, pointAssets]) => {
-      const farms = areas.filter((a) => a.level === 'farm')
-      const camps = areas.filter((a) => a.level === 'camp')
+    loadAllData().then((buckets) => {
+      // Feed each layer source
+      map.current.getSource('properties')?.setData(toFC(buckets.properties))
+      map.current.getSource('farms')?.setData(toFC(buckets.farms))
+      map.current.getSource('camps')?.setData(toFC(buckets.camps))
+      map.current.getSource('point_assets')?.setData(toFC(buckets.point_assets, 'geom'))
 
-      const toPolygonFeatures = (items) =>
-        items.filter((x) => x.boundary).map((x) => ({
-          type: 'Feature',
-          geometry: x.boundary,
-          properties: { id: x.id, name: x.name, level: x.level ?? null, area_ha: x.area_ha ?? null, type: x.type ?? null, notes: x.notes ?? null, owner: x.owner ?? null, property_id: x.property_id ?? null, parent_id: x.parent_id ?? null },
-        }))
+      // Notify App with raw data for dropdowns
+      onDataLoaded?.({
+        properties: buckets.properties,
+        farms:      buckets.farms,
+        camps:      buckets.camps,
+      })
 
-      const pointFeatures = pointAssets.filter((x) => x.geom).map((x) => ({
-        type: 'Feature',
-        geometry: x.geom,
-        properties: { id: x.id, name: x.name, type: x.type ?? null, condition: x.condition ?? null, notes: x.notes ?? null, property_id: x.property_id ?? null },
-      }))
-
-      map.current.getSource('properties')?.setData({ type: 'FeatureCollection', features: toPolygonFeatures(properties) })
-      map.current.getSource('farms')?.setData({ type: 'FeatureCollection', features: toPolygonFeatures(farms) })
-      map.current.getSource('camps')?.setData({ type: 'FeatureCollection', features: toPolygonFeatures(camps) })
-      map.current.getSource('point_assets')?.setData({ type: 'FeatureCollection', features: pointFeatures })
-
-      onDataLoaded?.({ properties, farms, camps })
-
+      // Fit to all polygons on first load
       if (reloadKey === 0) {
-        const all = [...toPolygonFeatures(properties), ...toPolygonFeatures(farms), ...toPolygonFeatures(camps)]
-        if (all.length > 0) {
+        const allPolygons = [
+          ...toFC(buckets.properties).features,
+          ...toFC(buckets.farms).features,
+          ...toFC(buckets.camps).features,
+        ]
+        if (allPolygons.length > 0) {
           const bounds = new mapboxgl.LngLatBounds()
-          all.forEach((f) => f.geometry.coordinates[0].forEach((c) => bounds.extend(c)))
+          allPolygons.forEach((f) =>
+            f.geometry.coordinates[0].forEach((c) => bounds.extend(c))
+          )
           map.current.fitBounds(bounds, { padding: 60 })
         }
       }
