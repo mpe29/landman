@@ -13,6 +13,7 @@
 //   'polygon' — fill + outline pair, requires geometry type Polygon/MultiPolygon
 //   'line'    — single line layer, requires geometry type LineString
 //   'point'   — circle layer, requires geometry type Point
+//   'symbol'  — text/icon label layer (special-cased in Map.jsx)
 //
 // For 'point' layers with per-feature colours, set color: 'multi' and
 // provide a colorExpression (Mapbox match expression).
@@ -33,7 +34,7 @@ export const LAYERS = [
     label:          'Property Boundary',
     group:          'areas',
     type:           'polygon',
-    color:          '#4ade80',
+    color:          '#8FAF7A',
     fillOpacity:    0.10,
     lineWidth:      2.5,
     featureType:    'property',      // passed to onFeatureClick
@@ -45,7 +46,7 @@ export const LAYERS = [
     label:          'Farms',
     group:          'areas',
     type:           'polygon',
-    color:          '#fbbf24',
+    color:          '#D4B646',
     fillOpacity:    0.12,
     lineWidth:      1.8,
     featureType:    'area',
@@ -56,7 +57,7 @@ export const LAYERS = [
     label:          'Camps / Paddocks',
     group:          'areas',
     type:           'polygon',
-    color:          '#60a5fa',
+    color:          '#4C7A8C',
     fillOpacity:    0.12,
     lineWidth:      1.2,
     featureType:    'area',
@@ -111,9 +112,17 @@ export const LAYERS = [
     label:          'Observations',
     group:          'field_data',
     type:           'point',
-    color:          '#e11d48',
+    color:          '#C46A2D',
     circleRadius:   6,
     featureType:    'observation',
+    defaultVisible: true,
+  },
+  {
+    id:             'livestock_counts',
+    label:          'Livestock Counts',
+    group:          'field_data',
+    type:           'symbol',
+    featureType:    null,            // symbol layer — not clickable
     defaultVisible: true,
   },
 ]

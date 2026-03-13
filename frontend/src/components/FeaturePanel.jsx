@@ -1,17 +1,19 @@
 import { useState, useEffect, useRef } from 'react'
 import { POINT_TYPES } from '../constants/pointTypes'
 import { api } from '../api'
+import { AssignLivestockModal, RecordLossModal, MoveLivestockModal } from './AssignLivestockModal'
+import { T, C } from '../constants/theme'
 
 const LEVEL_COLOR = {
-  property:    '#16a34a',
-  farm:        '#d97706',
-  camp:        '#2563eb',
-  observation: '#e11d48',
+  property:    C.pistachioGreen,
+  farm:        C.dryGrassYellow,
+  camp:        C.dustyBlue,
+  observation: C.burntOrange,
 }
 
 const CONDITION_OPTIONS = ['good', 'fair', 'poor', 'damaged']
 
-export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
+export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, camps, propertyId, tagTypes = [] }) {
   const { featureType, data } = feature
 
   const [name, setName]           = useState(data.name || '')
@@ -25,6 +27,45 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
   const [deleting, setDeleting]       = useState(false)
   const [dirty, setDirty]             = useState(false)
   const deleteTimerRef                = useRef(null)
+
+  // Observation tags
+  const [obsTags,       setObsTags]       = useState([])
+  const [tagPickerOpen, setTagPickerOpen] = useState(false)
+
+  useEffect(() => {
+    if (featureType !== 'observation') return
+    api.getObservationTags(data.id).then(setObsTags).catch(console.error)
+  }, [data.id, featureType]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAddTag = async (tagTypeId) => {
+    await api.addObservationTag(data.id, tagTypeId)
+    const updated = await api.getObservationTags(data.id)
+    setObsTags(updated)
+    setTagPickerOpen(false)
+  }
+
+  const handleRemoveTag = async (tagTypeId) => {
+    await api.removeObservationTag(data.id, tagTypeId)
+    setObsTags((prev) => prev.filter((t) => t.id !== tagTypeId))
+  }
+
+  // Livestock state (camps only)
+  const [livestock,        setLivestock]        = useState([])
+  const [showAddLivestock, setShowAddLivestock] = useState(false)
+  const [lossTarget,       setLossTarget]       = useState(null)
+  const [moveTarget,       setMoveTarget]       = useState(null)
+
+  const isCamp = featureType === 'area' && data.level === 'camp'
+
+  useEffect(() => {
+    if (!isCamp) return
+    api.getLivestockForCamp(data.id).then(setLivestock).catch(console.error)
+  }, [data.id, isCamp]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const reloadLivestock = () => {
+    api.getLivestockForCamp(data.id).then(setLivestock).catch(console.error)
+    onSaved?.()
+  }
 
   useEffect(() => {
     setName(data.name || '')
@@ -102,6 +143,31 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
   }
 
   return (
+    <>
+    {showAddLivestock && (
+      <AssignLivestockModal
+        campId={data.id}
+        campName={data.name}
+        propertyId={propertyId}
+        onSaved={() => { setShowAddLivestock(false); reloadLivestock() }}
+        onClose={() => setShowAddLivestock(false)}
+      />
+    )}
+    {lossTarget && (
+      <RecordLossModal
+        livestock={lossTarget}
+        onSaved={() => { setLossTarget(null); reloadLivestock() }}
+        onClose={() => setLossTarget(null)}
+      />
+    )}
+    {moveTarget && (
+      <MoveLivestockModal
+        livestock={moveTarget}
+        camps={camps || []}
+        onSaved={() => { setMoveTarget(null); reloadLivestock() }}
+        onClose={() => setMoveTarget(null)}
+      />
+    )}
     <div style={styles.panel}>
       {/* Header */}
       <div style={{ ...styles.header, borderLeftColor: accentColor }}>
@@ -111,6 +177,11 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
           </span>
           {data.area_ha && (
             <span style={styles.meta}>{Number(data.area_ha).toLocaleString()} ha</span>
+          )}
+          {isCamp && (
+            <span style={styles.meta}>
+              🐄 {Number(data.livestock_count ?? 0).toLocaleString()} head
+            </span>
           )}
           {featureType === 'observation' && data.observed_at && (
             <span style={styles.meta}>
@@ -171,10 +242,53 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
           </>
         )}
 
+        {/* Tag section — observations only, shown above comment */}
         {featureType === 'observation' && (
-          <div style={styles.readRow}>
-            <span style={styles.readLabel}>Type</span>
-            <span style={styles.readValue}>{(data.type || '—').replace(/_/g, ' ')}</span>
+          <div style={styles.tagSection}>
+            <div style={styles.tagHeader}>
+              <span style={styles.tagSectionLabel}>TAGS</span>
+              <button style={styles.tagAddBtn} onClick={() => setTagPickerOpen((o) => !o)}>
+                {tagPickerOpen ? '✕' : '+ Add'}
+              </button>
+            </div>
+
+            {/* Current tags */}
+            <div style={styles.tagChipRow}>
+              {obsTags.length === 0 && !tagPickerOpen && (
+                <span style={styles.tagEmpty}>No tags — add one to help filter later</span>
+              )}
+              {obsTags.map((tt) => (
+                <span key={tt.id} style={{ ...styles.tagChip, borderColor: tt.color, color: tt.color, background: tt.color + '14' }}>
+                  {tt.emoji} {tt.name}
+                  <button
+                    style={styles.tagRemoveBtn}
+                    onClick={() => handleRemoveTag(tt.id)}
+                    title="Remove tag"
+                  >×</button>
+                </span>
+              ))}
+            </div>
+
+            {/* Tag picker */}
+            {tagPickerOpen && (
+              <div style={styles.tagPicker}>
+                {tagTypes
+                  .filter((tt) => !obsTags.find((t) => t.id === tt.id))
+                  .map((tt) => (
+                    <button
+                      key={tt.id}
+                      style={styles.tagPickerItem}
+                      onClick={() => handleAddTag(tt.id)}
+                    >
+                      <span>{tt.emoji}</span>
+                      <span>{tt.name}</span>
+                    </button>
+                  ))}
+                {tagTypes.filter((tt) => !obsTags.find((t) => t.id === tt.id)).length === 0 && (
+                  <span style={styles.tagEmpty}>All tags applied</span>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -186,6 +300,44 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
             multiline
             placeholder="Optional notes…"
           />
+        )}
+
+        {/* Livestock section — camps only */}
+        {isCamp && (
+          <div style={styles.livestockSection}>
+            <div style={styles.livestockHeader}>
+              <span style={styles.sectionTitle}>Livestock</span>
+              <button style={styles.addBtn} onClick={() => setShowAddLivestock(true)}>+ Add</button>
+            </div>
+
+            {livestock.length === 0 ? (
+              <div style={styles.emptyText}>No livestock assigned to this camp.</div>
+            ) : (
+              livestock.map((row) => (
+                <div key={row.id} style={styles.livestockRow}>
+                  <div style={styles.livestockInfo}>
+                    <span style={styles.livestockEmoji}>{row.emoji}</span>
+                    <div>
+                      <div style={styles.livestockName}>
+                        {row.alive_count} {row.common_name}
+                        {row.breed_name ? ` · ${row.breed_name}` : ''}
+                        {!row.is_group && row.tag_number ? ` · #${row.tag_number}` : ''}
+                      </div>
+                      <div style={styles.livestockSub}>
+                        {row.is_group ? 'Group' : 'Individual'}
+                        {row.sex ? ` · ${row.sex}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={styles.livestockActions}>
+                    <button style={styles.smallBtn} onClick={() => setMoveTarget(row)}>Move</button>
+                    <button style={{ ...styles.smallBtn, color: T.danger, borderColor: T.dangerBorder }}
+                      onClick={() => setLossTarget(row)}>Loss</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         )}
       </div>
 
@@ -224,6 +376,7 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted }) {
         )}
       </div>
     </div>
+    </>
   )
 }
 
@@ -248,11 +401,11 @@ const styles = {
     bottom: 16,
     zIndex: 10,
     width: 290,
-    background: 'rgba(255, 255, 255, 0.97)',
+    background: T.surface,
     backdropFilter: 'blur(12px)',
-    border: '1px solid rgba(0,0,0,0.08)',
+    border: `1px solid ${T.surfaceBorder}`,
     borderRadius: 12,
-    boxShadow: '0 4px 24px rgba(0,0,0,0.1)',
+    boxShadow: '0 4px 24px rgba(47,47,47,0.12)',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
@@ -277,14 +430,14 @@ const styles = {
   },
   meta: {
     display: 'block',
-    color: 'rgba(0,0,0,0.35)',
+    color: T.textFaint,
     fontSize: 11,
     marginTop: 2,
   },
   closeBtn: {
     background: 'transparent',
     border: 'none',
-    color: 'rgba(0,0,0,0.3)',
+    color: T.textFaint,
     fontSize: 14,
     cursor: 'pointer',
     padding: 2,
@@ -292,7 +445,7 @@ const styles = {
   },
   photoWrap: {
     flexShrink: 0,
-    borderBottom: '1px solid rgba(0,0,0,0.06)',
+    borderBottom: `1px solid ${T.surfaceBorder}`,
   },
   photo: {
     width: '100%',
@@ -313,17 +466,17 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: 5,
-    color: 'rgba(0,0,0,0.45)',
+    color: T.textMuted,
     fontSize: 11,
     fontWeight: 600,
     textTransform: 'uppercase',
     letterSpacing: '0.07em',
   },
   input: {
-    background: 'rgba(0,0,0,0.03)',
-    border: '1px solid rgba(0,0,0,0.1)',
+    background: T.surfaceBorder,
+    border: `1px solid ${T.surfaceBorder}`,
     borderRadius: 6,
-    color: '#111827',
+    color: T.text,
     fontSize: 13,
     padding: '7px 10px',
     outline: 'none',
@@ -331,36 +484,18 @@ const styles = {
     boxSizing: 'border-box',
     fontFamily: 'inherit',
   },
-  readRow: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 4,
-  },
-  readLabel: {
-    color: 'rgba(0,0,0,0.45)',
-    fontSize: 11,
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: '0.07em',
-  },
-  readValue: {
-    color: '#111827',
-    fontSize: 13,
-    padding: '4px 0',
-    textTransform: 'capitalize',
-  },
   actions: {
     padding: '12px 16px',
     display: 'flex',
     flexDirection: 'column',
     gap: 8,
-    borderTop: '1px solid rgba(0,0,0,0.06)',
+    borderTop: `1px solid ${T.surfaceBorder}`,
     flexShrink: 0,
   },
   saveBtn: {
     border: 'none',
     borderRadius: 6,
-    color: '#fff',
+    color: T.textOnDark,
     fontSize: 13,
     fontWeight: 700,
     padding: '9px 0',
@@ -370,9 +505,9 @@ const styles = {
   },
   deleteBtn: {
     background: 'transparent',
-    border: '1px solid rgba(220,38,38,0.2)',
+    border: `1px solid ${T.dangerBorder}`,
     borderRadius: 6,
-    color: 'rgba(220,38,38,0.65)',
+    color: T.danger,
     fontSize: 12,
     padding: '7px 0',
     cursor: 'pointer',
@@ -386,15 +521,15 @@ const styles = {
     flexWrap: 'wrap',
   },
   confirmText: {
-    color: 'rgba(146,64,14,0.9)',
+    color: C.burntOrange,
     fontSize: 11,
     flex: 1,
   },
   confirmYes: {
-    background: 'rgba(220,38,38,0.08)',
-    border: '1px solid rgba(220,38,38,0.3)',
+    background: T.dangerBg,
+    border: `1px solid ${T.dangerBorder}`,
     borderRadius: 5,
-    color: '#dc2626',
+    color: T.danger,
     fontSize: 11,
     fontWeight: 600,
     padding: '5px 10px',
@@ -403,11 +538,135 @@ const styles = {
   },
   confirmNo: {
     background: 'transparent',
-    border: '1px solid rgba(0,0,0,0.1)',
+    border: `1px solid ${T.surfaceBorder}`,
     borderRadius: 5,
-    color: 'rgba(0,0,0,0.4)',
+    color: T.textMuted,
     fontSize: 11,
     padding: '5px 10px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  tagSection: {
+    borderTop: `1px solid ${T.surfaceBorder}`,
+    paddingTop: 12, marginTop: 4,
+    display: 'flex', flexDirection: 'column', gap: 8,
+  },
+  tagHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  },
+  tagSectionLabel: {
+    fontSize: 11, fontWeight: 700, letterSpacing: '0.07em',
+    textTransform: 'uppercase', color: T.textMuted,
+  },
+  tagAddBtn: {
+    fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 5,
+    border: `1.5px solid ${C.burntOrange}55`, background: C.burntOrange + '12',
+    color: C.burntOrange, cursor: 'pointer', fontFamily: 'inherit',
+  },
+  tagChipRow: {
+    display: 'flex', flexWrap: 'wrap', gap: 5,
+    minHeight: 24,
+  },
+  tagChip: {
+    display: 'inline-flex', alignItems: 'center', gap: 4,
+    padding: '3px 8px', borderRadius: 12,
+    border: '1px solid', fontSize: 11, fontWeight: 600,
+    whiteSpace: 'nowrap',
+  },
+  tagRemoveBtn: {
+    background: 'none', border: 'none', cursor: 'pointer',
+    color: 'inherit', fontSize: 13, lineHeight: 1, padding: 0,
+    opacity: 0.6, fontFamily: 'inherit',
+  },
+  tagEmpty: {
+    fontSize: 11, color: T.textFaint, fontStyle: 'italic',
+  },
+  tagPicker: {
+    display: 'flex', flexDirection: 'column', gap: 2,
+    background: T.surfaceBorder, borderRadius: 7,
+    padding: 6, border: `1px solid ${T.surfaceBorder}`,
+  },
+  tagPickerItem: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    background: 'transparent', border: 'none', cursor: 'pointer',
+    padding: '5px 8px', borderRadius: 5, fontSize: 12,
+    color: T.text, fontFamily: 'inherit', textAlign: 'left',
+  },
+  livestockSection: {
+    borderTop: `1px solid ${T.surfaceBorder}`,
+    paddingTop: 12,
+    marginTop: 4,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  livestockHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sectionTitle: {
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.07em',
+    textTransform: 'uppercase',
+    color: T.textMuted,
+  },
+  addBtn: {
+    fontSize: 11,
+    fontWeight: 700,
+    padding: '3px 9px',
+    borderRadius: 5,
+    border: `1.5px solid ${T.brandBorder}`,
+    background: T.brandBg,
+    color: T.brand,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  emptyText: {
+    fontSize: 12,
+    color: T.textFaint,
+    fontStyle: 'italic',
+  },
+  livestockRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '7px 10px',
+    background: T.surfaceBorder,
+    borderRadius: 7,
+    gap: 8,
+  },
+  livestockInfo: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+  },
+  livestockEmoji: { fontSize: 18, flexShrink: 0 },
+  livestockName: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: T.text,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  livestockSub: {
+    fontSize: 11,
+    color: T.textMuted,
+    textTransform: 'capitalize',
+  },
+  livestockActions: { display: 'flex', gap: 5, flexShrink: 0 },
+  smallBtn: {
+    fontSize: 10,
+    fontWeight: 600,
+    padding: '3px 7px',
+    borderRadius: 4,
+    border: `1px solid ${T.surfaceBorder}`,
+    background: 'transparent',
+    color: T.textMuted,
     cursor: 'pointer',
     fontFamily: 'inherit',
   },

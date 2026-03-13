@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ACTIVE_LAYERS, LAYER_GROUPS } from '../constants/layers'
 import { POINT_TYPES } from '../constants/pointTypes'
+import { T } from '../constants/theme'
 
 export default function LayerControl({ visibility, onChange }) {
   const [collapsed, setCollapsed] = useState(false)
@@ -58,16 +59,18 @@ function LayerRow({ layer, visible, onChange }) {
           <span style={{
             ...styles.colorBlock,
             background: visible ? layer.color + '28' : 'transparent',
-            borderColor: visible ? layer.color : 'rgba(0,0,0,0.12)',
+            borderColor: visible ? layer.color : T.surfaceBorder,
           }} />
         ) : layer.type === 'line' ? (
-          <span style={{ ...styles.colorLine, borderColor: visible ? layer.color : 'rgba(0,0,0,0.12)' }} />
+          <span style={{ ...styles.colorLine, borderColor: visible ? layer.color : T.surfaceBorder }} />
+        ) : layer.type === 'symbol' ? (
+          <span style={{ ...styles.symbolIcon, opacity: visible ? 1 : 0.25 }}>🐄</span>
         ) : (
-          <span style={{ ...styles.colorDot, background: visible ? layer.color : 'rgba(0,0,0,0.12)' }} />
+          <span style={{ ...styles.colorDot, background: visible ? layer.color : T.surfaceBorder }} />
         )}
         <span style={{ ...styles.layerLabel, opacity: visible ? 1 : 0.35 }}>{layer.label}</span>
       </div>
-      <div style={{ ...styles.toggle, background: visible ? '#16a34a' : 'rgba(0,0,0,0.12)' }}>
+      <div style={{ ...styles.toggle, background: visible ? T.brand : T.surfaceBorder }}>
         <div style={{ ...styles.toggleThumb, transform: visible ? 'translateX(12px)' : 'translateX(1px)' }} />
       </div>
     </div>
@@ -80,11 +83,11 @@ const styles = {
     bottom: 32,
     left: 16,
     zIndex: 10,
-    background: 'rgba(255, 255, 255, 0.97)',
+    background: T.surface,
     backdropFilter: 'blur(10px)',
-    border: '1px solid rgba(0,0,0,0.08)',
+    border: `1px solid ${T.surfaceBorder}`,
     borderRadius: 10,
-    boxShadow: '0 2px 20px rgba(0,0,0,0.1)',
+    boxShadow: T.surfaceShadow,
     minWidth: 200,
     overflow: 'hidden',
   },
@@ -99,25 +102,25 @@ const styles = {
     cursor: 'pointer',
   },
   title: {
-    color: 'rgba(0,0,0,0.35)',
+    color: T.textFaint,
     fontSize: 10,
     fontWeight: 700,
     letterSpacing: '0.12em',
   },
   chevron: {
-    color: 'rgba(0,0,0,0.3)',
+    color: T.textFaint,
     fontSize: 11,
   },
   body: {
     padding: '2px 0 8px',
-    borderTop: '1px solid rgba(0,0,0,0.06)',
+    borderTop: `1px solid ${T.surfaceBorder}`,
   },
   group: {
     padding: '6px 0 2px',
   },
   groupLabel: {
     display: 'block',
-    color: 'rgba(0,0,0,0.28)',
+    color: T.textFaint,
     fontSize: 9,
     fontWeight: 700,
     letterSpacing: '0.1em',
@@ -152,6 +155,11 @@ const styles = {
     borderTop: '2px solid',
     flexShrink: 0,
   },
+  symbolIcon: {
+    fontSize: 12,
+    lineHeight: 1,
+    flexShrink: 0,
+  },
   colorDot: {
     width: 10,
     height: 10,
@@ -170,7 +178,7 @@ const styles = {
     display: 'inline-block',
   },
   layerLabel: {
-    color: 'rgba(0,0,0,0.7)',
+    color: T.textMuted,
     fontSize: 12,
     whiteSpace: 'nowrap',
     overflow: 'hidden',

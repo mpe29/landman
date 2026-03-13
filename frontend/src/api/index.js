@@ -45,9 +45,24 @@ export const api = {
   async getObservations(propertyId) {
     let q = supabase.from('observations_geo').select('*').order('observed_at', { ascending: false })
     if (propertyId) q = q.eq('property_id', propertyId)
-    const { data, error } = await q
-    if (error) throw error
-    return data
+    const { data: obs, error: obsErr } = await q
+    if (obsErr) throw obsErr
+    if (!obs.length) return obs
+
+    // Fetch tags for all observations and join client-side
+    const ids = obs.map((o) => o.id)
+    const { data: tags, error: tagErr } = await supabase
+      .from('observation_tags')
+      .select('observation_id, tag_type_id')
+      .in('observation_id', ids)
+    if (tagErr) throw tagErr
+
+    const tagMap = {}
+    tags.forEach((t) => {
+      if (!tagMap[t.observation_id]) tagMap[t.observation_id] = []
+      tagMap[t.observation_id].push(t.tag_type_id)
+    })
+    return obs.map((o) => ({ ...o, tag_ids: tagMap[o.id] || [] }))
   },
 
   // Operations = events/campaigns (e.g. "North Fence Build 2025")
@@ -187,6 +202,153 @@ export const api = {
       .from('observations')
       .update({ notes: notes || null })
       .eq('id', id)
+    if (error) throw error
+  },
+
+  // ---------------------------------------------------------------
+  // Observation tags
+  // ---------------------------------------------------------------
+  async getObservationTagTypes(propertyId) {
+    // Returns global tags + property-specific tags (if propertyId given)
+    let q = supabase
+      .from('observation_tag_types')
+      .select('*')
+      .order('sort_order')
+      .order('name')
+    if (propertyId) {
+      q = q.or(`property_id.is.null,property_id.eq.${propertyId}`)
+    } else {
+      q = q.is('property_id', null)
+    }
+    const { data, error } = await q
+    if (error) throw error
+    return data
+  },
+
+  async getObservationTags(observationId) {
+    // Returns full tag_type objects for one observation
+    const { data, error } = await supabase
+      .from('observation_tags')
+      .select('tag_type_id, observation_tag_types(id, name, emoji, color)')
+      .eq('observation_id', observationId)
+    if (error) throw error
+    return data.map((row) => row.observation_tag_types).filter(Boolean)
+  },
+
+  async addObservationTag(observationId, tagTypeId) {
+    const { error } = await supabase
+      .from('observation_tags')
+      .insert({ observation_id: observationId, tag_type_id: tagTypeId })
+    if (error && error.code !== '23505') throw error // 23505 = duplicate, ignore
+  },
+
+  async removeObservationTag(observationId, tagTypeId) {
+    const { error } = await supabase
+      .from('observation_tags')
+      .delete()
+      .eq('observation_id', observationId)
+      .eq('tag_type_id', tagTypeId)
+    if (error) throw error
+  },
+
+  async createObservationTagType({ propertyId, name, emoji, color }) {
+    const { data, error } = await supabase
+      .from('observation_tag_types')
+      .insert({
+        property_id: propertyId || null,
+        name,
+        emoji: emoji || '📌',
+        color: color || '#6b7280',
+      })
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  // ---------------------------------------------------------------
+  // Livestock
+  // ---------------------------------------------------------------
+  async getLivestockTypes() {
+    const { data, error } = await supabase
+      .from('livestock_types')
+      .select('*')
+      .order('category')
+      .order('common_name')
+    if (error) throw error
+    return data
+  },
+
+  async getBreeds(typeId) {
+    const { data, error } = await supabase
+      .from('breeds')
+      .select('*')
+      .eq('livestock_type_id', typeId)
+      .order('name')
+    if (error) throw error
+    return data
+  },
+
+  async getLivestockCampCounts(propertyId) {
+    let q = supabase.from('livestock_camp_counts').select('*')
+    if (propertyId) q = q.eq('property_id', propertyId)
+    const { data, error } = await q
+    if (error) throw error
+    return data
+  },
+
+  async getLivestockForCamp(campId) {
+    const { data, error } = await supabase
+      .from('livestock_alive_counts')
+      .select('*')
+      .eq('camp_id', campId)
+      .order('created_at')
+    if (error) throw error
+    return data
+  },
+
+  async createLivestock({ propertyId, campId, typeId, breedId, isGroup, headCount, sex, dob, tagNumber, acquiredAt, notes }) {
+    const { data, error } = await supabase.rpc('create_livestock', {
+      p_property_id:       propertyId,
+      p_camp_id:           campId       || null,
+      p_livestock_type_id: typeId       || null,
+      p_breed_id:          breedId      || null,
+      p_is_group:          isGroup      ?? true,
+      p_head_count:        headCount    || 1,
+      p_sex:               sex          || null,
+      p_dob:               dob          || null,
+      p_tag_number:        tagNumber    || null,
+      p_acquired_at:       acquiredAt   || null,
+      p_notes:             notes        || null,
+    })
+    if (error) throw error
+    return data
+  },
+
+  async createLivestockEvent({ livestockId, eventType, eventDate, headCount, campFrom, campTo, notes }) {
+    const { data, error } = await supabase.rpc('create_livestock_event', {
+      p_livestock_id: livestockId,
+      p_event_type:   eventType,
+      p_event_date:   eventDate   || new Date().toISOString().slice(0, 10),
+      p_head_count:   headCount   || 1,
+      p_camp_from:    campFrom    || null,
+      p_camp_to:      campTo      || null,
+      p_notes:        notes       || null,
+    })
+    if (error) throw error
+    return data
+  },
+
+  async updateLivestock(id, { campId, notes }) {
+    const updates = {}
+    if (campId !== undefined) updates.camp_id = campId
+    if (notes  !== undefined) updates.notes   = notes || null
+    const { error } = await supabase.from('livestock').update(updates).eq('id', id)
+    if (error) throw error
+  },
+
+  async deleteLivestock(id) {
+    const { error } = await supabase.from('livestock').delete().eq('id', id)
     if (error) throw error
   },
 

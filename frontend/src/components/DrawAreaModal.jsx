@@ -1,22 +1,23 @@
 import { useState } from 'react'
+import { T } from '../constants/theme'
 
 const CONFIG = {
   draw_property: {
     title: 'Save Property',
     hint: 'Name this top-level land holding. Everything else lives inside it.',
-    color: '#16a34a',
+    color: '#8FAF7A',
     showParent: false,
   },
   draw_farm: {
     title: 'Save Farm',
     hint: 'Name this farm within your property.',
-    color: '#d97706',
+    color: '#D4B646',
     showParent: false,
   },
   draw_camp: {
     title: 'Save Camp / Paddock',
     hint: 'Name this camp and select which farm it belongs to.',
-    color: '#2563eb',
+    color: '#4C7A8C',
     showParent: true,
   },
 }
@@ -128,13 +129,13 @@ const styles = {
     backdropFilter: 'blur(4px)',
   },
   modal: {
-    background: '#fff',
-    border: '1px solid rgba(0,0,0,0.08)',
+    background: T.surface,
+    border: `1px solid ${T.surfaceBorder}`,
     borderTop: '3px solid',
     borderRadius: 12,
     padding: 28,
     width: 380,
-    boxShadow: '0 8px 40px rgba(0,0,0,0.15)',
+    boxShadow: '0 8px 40px rgba(47,47,47,0.15)',
   },
   badge: {
     display: 'inline-block',
@@ -147,13 +148,13 @@ const styles = {
     marginBottom: 10,
   },
   title: {
-    color: '#111827',
+    color: T.text,
     fontSize: 17,
     fontWeight: 600,
     marginBottom: 6,
   },
   hint: {
-    color: 'rgba(0,0,0,0.45)',
+    color: T.textMuted,
     fontSize: 13,
     marginBottom: 20,
     lineHeight: 1.5,
@@ -167,17 +168,17 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: 6,
-    color: 'rgba(0,0,0,0.5)',
+    color: T.textMuted,
     fontSize: 11,
     fontWeight: 600,
     textTransform: 'uppercase',
     letterSpacing: '0.07em',
   },
   input: {
-    background: 'rgba(0,0,0,0.03)',
-    border: '1px solid rgba(0,0,0,0.1)',
+    background: T.surfaceBorder,
+    border: `1px solid ${T.surfaceBorder}`,
     borderRadius: 6,
-    color: '#111827',
+    color: T.text,
     fontSize: 14,
     padding: '8px 12px',
     outline: 'none',
@@ -186,8 +187,8 @@ const styles = {
   warn: {
     color: '#92400e',
     fontSize: 13,
-    background: 'rgba(251,191,36,0.1)',
-    border: '1px solid rgba(251,191,36,0.3)',
+    background: '#D4B64614',
+    border: '1px solid #D4B64640',
     borderRadius: 6,
     padding: '8px 12px',
   },
@@ -199,9 +200,9 @@ const styles = {
   cancelBtn: {
     flex: 1,
     background: 'transparent',
-    border: '1px solid rgba(0,0,0,0.1)',
+    border: `1px solid ${T.surfaceBorder}`,
     borderRadius: 6,
-    color: 'rgba(0,0,0,0.5)',
+    color: T.textMuted,
     fontSize: 13,
     padding: '9px 0',
     cursor: 'pointer',
@@ -211,7 +212,7 @@ const styles = {
     flex: 2,
     border: 'none',
     borderRadius: 6,
-    color: '#fff',
+    color: T.textOnDark,
     fontSize: 13,
     fontWeight: 700,
     padding: '9px 0',

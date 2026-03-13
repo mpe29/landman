@@ -1,180 +1,260 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import exifr from 'exifr'
 import { api } from '../api'
+import { T, C } from '../constants/theme'
 
-const OBS_TYPES = [
-  { id: 'grass_condition',     label: 'Grass Condition'     },
-  { id: 'erosion',             label: 'Erosion'             },
-  { id: 'fence_damage',        label: 'Fence Damage'        },
-  { id: 'livestock_presence',  label: 'Livestock Presence'  },
-  { id: 'water',               label: 'Water / Borehole'    },
-  { id: 'wildlife',            label: 'Wildlife'            },
-  { id: 'other',               label: 'Other'               },
-]
+// Convert magnetic bearing (0–360°) to 8-point cardinal abbreviation
+function bearingToCardinal(deg) {
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+  return dirs[Math.round(deg / 45) % 8]
+}
 
-export default function ObservationModal({ propertyId, operations, onSaved, onCancel }) {
-  const [file, setFile]               = useState(null)
-  const [preview, setPreview]         = useState(null)
-  const [exifData, setExifData]       = useState(null)   // { lat, lng, timestamp }
-  const [exifLoading, setExifLoading] = useState(false)
-  const [comment, setComment]         = useState('')
-  const [obsType, setObsType]         = useState('other')
-  const [operationId, setOperationId] = useState('')
-  const [saving, setSaving]           = useState(false)
-  const fileInputRef                  = useRef(null)
+let _nextId = 0
 
-  const handleFileChange = async (e) => {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setFile(f)
-    setPreview(URL.createObjectURL(f))
-    setExifLoading(true)
-    try {
-      const exif = await exifr.parse(f, { gps: true, tiff: true })
-      setExifData({
-        lat:       exif?.latitude   ?? null,
-        lng:       exif?.longitude  ?? null,
-        timestamp: exif?.DateTimeOriginal ?? exif?.CreateDate ?? null,
-      })
-    } catch {
-      setExifData({ lat: null, lng: null, timestamp: null })
-    } finally {
-      setExifLoading(false)
+async function readExif(file) {
+  try {
+    const exif = await exifr.parse(file, { gps: true, tiff: true })
+    const rawBearing = exif?.GPSImgDirection ?? null
+    return {
+      lat:       exif?.latitude          ?? null,
+      lng:       exif?.longitude         ?? null,
+      timestamp: exif?.DateTimeOriginal  ?? exif?.CreateDate ?? null,
+      bearing:   rawBearing != null ? Math.round(rawBearing) : null,
     }
+  } catch {
+    return { lat: null, lng: null, timestamp: null, bearing: null }
   }
+}
 
-  const resetPhoto = () => {
-    setFile(null)
-    setPreview(null)
-    setExifData(null)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }
+export default function ObservationModal({ propertyId, operations, tagTypes = [], onSaved, onCancel }) {
+  const [photos,      setPhotos]      = useState([])
+  const [batchOpId,   setBatchOpId]   = useState('')
+  const [batchTagIds, setBatchTagIds] = useState([])
+  const [uploading,   setUploading]   = useState(false)
+  const [dragOver,    setDragOver]    = useState(false)
+  const fileInputRef = useRef(null)
 
-  const handleSave = async () => {
-    if (!file) return
-    setSaving(true)
-    try {
-      // 1. Upload image to Supabase Storage
-      const imageUrl = await api.uploadObservationImage(file)
+  const toggleBatchTag = (id) =>
+    setBatchTagIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
 
-      // 2. Build GeoJSON point from EXIF GPS if available
-      const geom = (exifData?.lat != null && exifData?.lng != null)
-        ? { type: 'Point', coordinates: [exifData.lng, exifData.lat] }
-        : null
+  // ── Add files (from drop or file picker) ──────────────────────────
+  const addFiles = useCallback((fileList) => {
+    const incoming = Array.from(fileList).filter((f) => f.type.startsWith('image/'))
+    if (!incoming.length) return
 
-      // 3. Save observation record via RPC
-      await api.createObservation({
-        propertyId,
-        operationId: operationId || null,
-        geom,
-        observedAt: exifData?.timestamp ? new Date(exifData.timestamp).toISOString() : new Date().toISOString(),
-        type:       obsType,
-        notes:      comment.trim() || null,
-        imageUrl,
+    const newPhotos = incoming.map((file) => ({
+      id:           ++_nextId,
+      file,
+      preview:      URL.createObjectURL(file),
+      exifStatus:   'loading',  // loading | done
+      lat: null, lng: null, timestamp: null, bearing: null,
+      notes:        '',
+      uploadStatus: 'pending',  // pending | uploading | done | error
+      errorMsg:     null,
+    }))
+
+    setPhotos((prev) => [...prev, ...newPhotos])
+
+    // Parse EXIF concurrently
+    newPhotos.forEach((photo) => {
+      readExif(photo.file).then((exif) => {
+        setPhotos((prev) =>
+          prev.map((p) => p.id === photo.id ? { ...p, ...exif, exifStatus: 'done' } : p)
+        )
       })
+    })
+  }, [])
 
-      onSaved()
-    } catch (err) {
-      alert('Save failed: ' + err.message)
-    } finally {
-      setSaving(false)
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setDragOver(false)
+    addFiles(e.dataTransfer.files)
+  }
+
+  const removePhoto = (id) => setPhotos((prev) => prev.filter((p) => p.id !== id))
+
+  const updatePhoto = (id, updates) =>
+    setPhotos((prev) => prev.map((p) => p.id === id ? { ...p, ...updates } : p))
+
+  // ── Upload all pending photos sequentially ────────────────────────
+  const handleUploadAll = async () => {
+    const pending = photos.filter((p) => p.uploadStatus !== 'done')
+    if (!pending.length) return
+    setUploading(true)
+
+    for (const photo of pending) {
+      updatePhoto(photo.id, { uploadStatus: 'uploading' })
+      try {
+        const imageUrl = await api.uploadObservationImage(photo.file)
+        const geom = (photo.lat != null && photo.lng != null)
+          ? { type: 'Point', coordinates: [photo.lng, photo.lat] }
+          : null
+        const obsId = await api.createObservation({
+          propertyId,
+          operationId: batchOpId || null,
+          geom,
+          observedAt:  photo.timestamp
+            ? new Date(photo.timestamp).toISOString()
+            : new Date().toISOString(),
+          type:        null,
+          notes:       photo.notes.trim() || null,
+          imageUrl,
+        })
+        // Apply batch tags to the new observation
+        if (obsId && batchTagIds.length > 0) {
+          await Promise.all(
+            batchTagIds.map((tId) => api.addObservationTag(obsId, tId).catch(() => {}))
+          )
+        }
+        updatePhoto(photo.id, { uploadStatus: 'done' })
+      } catch (err) {
+        updatePhoto(photo.id, { uploadStatus: 'error', errorMsg: err.message })
+      }
     }
+
+    setUploading(false)
+    // Close if every photo succeeded
+    setPhotos((current) => {
+      if (current.every((p) => p.uploadStatus === 'done')) {
+        setTimeout(onSaved, 400)
+      }
+      return current
+    })
   }
 
-  const formatTimestamp = (ts) => {
-    if (!ts) return null
-    try { return new Date(ts).toLocaleString() } catch { return null }
-  }
+  const doneCount    = photos.filter((p) => p.uploadStatus === 'done').length
+  const pendingCount = photos.filter((p) => p.uploadStatus !== 'done').length
+  const hasErrors    = photos.some((p) => p.uploadStatus === 'error')
 
   return (
     <div style={styles.overlay}>
       <div style={styles.modal}>
-        <div style={styles.badge}>📷 OBSERVATION</div>
-        <h3 style={styles.title}>Add Photo Observation</h3>
 
-        {/* Photo picker / preview */}
-        {!file ? (
-          <div style={styles.dropzone} onClick={() => fileInputRef.current?.click()}>
-            <span style={styles.dropIcon}>📷</span>
-            <span style={styles.dropText}>Click to select a photo</span>
-            <span style={styles.dropSub}>GPS coordinates &amp; timestamp extracted automatically from EXIF</span>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              style={{ display: 'none' }}
-              onChange={handleFileChange}
-            />
+        {/* Header */}
+        <div style={styles.header}>
+          <div>
+            <span style={styles.badge}>📷 OBSERVATIONS</span>
+            <div style={styles.title}>Add Photos</div>
           </div>
-        ) : (
-          <div style={styles.previewRow}>
-            <img src={preview} style={styles.previewImg} alt="preview" />
-            <div style={styles.exifBox}>
-              {exifLoading ? (
-                <span style={styles.exifLine}>Reading EXIF data…</span>
-              ) : exifData?.lat != null ? (
-                <>
-                  <span style={{ ...styles.exifLine, color: '#16a34a' }}>
-                    📍 {exifData.lat.toFixed(5)}, {exifData.lng.toFixed(5)}
-                  </span>
-                  {formatTimestamp(exifData.timestamp) && (
-                    <span style={styles.exifLine}>
-                      🕐 {formatTimestamp(exifData.timestamp)}
-                    </span>
-                  )}
-                </>
-              ) : (
-                <span style={{ ...styles.exifLine, color: '#b45309' }}>
-                  ⚠ No GPS in photo — will save without map location
-                </span>
-              )}
-              <button style={styles.changeBtn} onClick={resetPhoto}>Change photo</button>
-            </div>
-          </div>
-        )}
+          <button style={styles.closeBtn} onClick={onCancel} disabled={uploading}>✕</button>
+        </div>
 
-        {/* Form fields */}
-        <div style={styles.form}>
-          <label style={styles.label}>
-            Observation type
-            <select style={styles.input} value={obsType} onChange={(e) => setObsType(e.target.value)}>
-              {OBS_TYPES.map((t) => (
-                <option key={t.id} value={t.id}>{t.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <label style={styles.label}>
-            Comment
-            <textarea
-              style={{ ...styles.input, height: 72, resize: 'vertical' }}
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              placeholder="What did you observe? Describe conditions, issues, action needed…"
-            />
-          </label>
-
-          {operations && operations.length > 0 && (
-            <label style={styles.label}>
+        {/* Batch settings */}
+        <div style={styles.batchRow}>
+          {operations?.length > 0 && (
+            <label style={styles.batchLabel}>
               Link to event <span style={styles.optional}>(optional)</span>
-              <select style={styles.input} value={operationId} onChange={(e) => setOperationId(e.target.value)}>
-                <option value="">— No event —</option>
-                {operations.map((op) => (
-                  <option key={op.id} value={op.id}>{op.name}</option>
-                ))}
+              <select style={styles.batchSelect} value={batchOpId} onChange={(e) => setBatchOpId(e.target.value)}>
+                <option value="">— None —</option>
+                {operations.map((op) => <option key={op.id} value={op.id}>{op.name}</option>)}
               </select>
             </label>
           )}
         </div>
 
+        {/* Tag selection */}
+        {tagTypes.length > 0 && (
+          <div style={styles.tagSection}>
+            <span style={styles.tagSectionLabel}>Tags</span>
+            <div style={styles.tagChips}>
+              {tagTypes.map((tt) => (
+                <button
+                  key={tt.id}
+                  style={{
+                    ...styles.tagChip,
+                    ...(batchTagIds.includes(tt.id)
+                      ? { borderColor: tt.color, color: tt.color, background: tt.color + '18' }
+                      : {}),
+                  }}
+                  onClick={() => toggleBatchTag(tt.id)}
+                >
+                  {tt.emoji} {tt.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Drop zone */}
+        <div
+          style={{
+            ...styles.dropzone,
+            borderColor: dragOver ? C.burntOrange : 'rgba(0,0,0,0.12)',
+            background:  dragOver ? C.burntOrange + '08' : 'transparent',
+          }}
+          onClick={() => !uploading && fileInputRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+          onDragEnter={(e) => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+        >
+          <span style={styles.dropIcon}>{dragOver ? '📂' : '📷'}</span>
+          <span style={styles.dropText}>
+            {photos.length
+              ? `${photos.length} photo${photos.length !== 1 ? 's' : ''} queued — drop more or click to add`
+              : 'Drop photos here, or click to select'}
+          </span>
+          <span style={styles.dropSub}>
+            GPS coordinates, timestamps &amp; compass bearing extracted automatically from EXIF
+          </span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => addFiles(e.target.files)}
+          />
+        </div>
+
+        {/* Photo grid */}
+        {photos.length > 0 && (
+          <div style={styles.grid}>
+            {photos.map((photo) => (
+              <PhotoCard
+                key={photo.id}
+                photo={photo}
+                onRemove={() => removePhoto(photo.id)}
+                onNotes={(v) => updatePhoto(photo.id, { notes: v })}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Progress summary */}
+        {uploading && (
+          <div style={styles.progress}>
+            <div style={{ ...styles.progressBar, width: `${(doneCount / photos.length) * 100}%` }} />
+            <span style={styles.progressText}>
+              Saving {doneCount} of {photos.length}…
+            </span>
+          </div>
+        )}
+
+        {hasErrors && !uploading && (
+          <div style={styles.errorNote}>
+            Some photos failed — fix the errors and click Retry.
+          </div>
+        )}
+
+        {/* Actions */}
         <div style={styles.actions}>
-          <button style={styles.cancelBtn} onClick={onCancel}>Cancel</button>
+          <button style={styles.cancelBtn} onClick={onCancel} disabled={uploading}>
+            Cancel
+          </button>
           <button
-            style={{ ...styles.saveBtn, opacity: (!file || saving) ? 0.45 : 1 }}
-            onClick={handleSave}
-            disabled={!file || saving}
+            style={{
+              ...styles.saveBtn,
+              opacity: (!pendingCount || uploading) ? 0.45 : 1,
+            }}
+            onClick={handleUploadAll}
+            disabled={!pendingCount || uploading}
           >
-            {saving ? 'Uploading…' : 'Save Observation'}
+            {uploading
+              ? `Uploading ${doneCount + 1} of ${photos.length}…`
+              : hasErrors
+              ? `Retry ${pendingCount} Failed`
+              : `Upload ${pendingCount} Photo${pendingCount !== 1 ? 's' : ''}`}
           </button>
         </div>
       </div>
@@ -182,166 +262,367 @@ export default function ObservationModal({ propertyId, operations, onSaved, onCa
   )
 }
 
+// ── Individual photo card ─────────────────────────────────────────────────────
+function PhotoCard({ photo, onRemove, onNotes }) {
+  const borderColor =
+    photo.uploadStatus === 'done'      ? C.pistachioGreen :
+    photo.uploadStatus === 'uploading' ? C.dryGrassYellow :
+    photo.uploadStatus === 'error'     ? T.danger :
+    T.surfaceBorder
+
+  return (
+    <div style={{ ...styles.card, borderColor }}>
+      {/* Remove button */}
+      {photo.uploadStatus === 'pending' && (
+        <button style={styles.cardRemove} onClick={onRemove} title="Remove">✕</button>
+      )}
+
+      {/* Thumbnail */}
+      <img src={photo.preview} style={styles.thumb} alt="" />
+
+      {/* Status overlay */}
+      {photo.uploadStatus !== 'pending' && (
+        <div style={{
+          ...styles.statusBar,
+          background:
+            photo.uploadStatus === 'done'      ? C.deepOlive + 'e6'  :
+            photo.uploadStatus === 'uploading' ? C.dryGrassYellow + 'e6' :
+            T.danger + 'e6',
+        }}>
+          {photo.uploadStatus === 'uploading' ? '⏳ Uploading…' :
+           photo.uploadStatus === 'done'      ? '✓ Saved'       :
+           `✕ ${photo.errorMsg ?? 'Error'}`}
+        </div>
+      )}
+
+      {/* EXIF info */}
+      <div style={styles.cardInfo}>
+        <div style={styles.cardFilename} title={photo.file.name}>
+          {photo.file.name.length > 22 ? photo.file.name.slice(0, 19) + '…' : photo.file.name}
+        </div>
+        {photo.exifStatus === 'loading' ? (
+          <span style={styles.gpsChip}>Reading…</span>
+        ) : photo.lat != null ? (
+          <div style={styles.exifRow}>
+            <span style={{ ...styles.gpsChip, color: C.deepOlive, background: T.brandBg }}>
+              📍 GPS
+            </span>
+            {photo.bearing != null && (
+              <span style={{ ...styles.gpsChip, color: C.dustyBlue, background: C.dustyBlue + '14' }}>
+                ↗ {bearingToCardinal(photo.bearing)}
+              </span>
+            )}
+          </div>
+        ) : (
+          <span style={{ ...styles.gpsChip, color: '#b45309', background: 'rgba(180,83,9,0.08)' }}>
+            ⚠ No GPS
+          </span>
+        )}
+        {photo.uploadStatus === 'pending' && (
+          <textarea
+            style={styles.cardNotes}
+            placeholder="Notes…"
+            value={photo.notes}
+            rows={2}
+            onChange={(e) => onNotes(e.target.value)}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 const styles = {
   overlay: {
-    position: 'absolute',
-    inset: 0,
-    zIndex: 20,
-    display: 'flex',
-    alignItems: 'center',
+    position:       'fixed',
+    inset:          0,
+    zIndex:         30,
+    display:        'flex',
+    alignItems:     'center',
     justifyContent: 'center',
-    background: 'rgba(0,0,0,0.35)',
+    background:     'rgba(0,0,0,0.4)',
     backdropFilter: 'blur(4px)',
   },
   modal: {
-    background: '#fff',
-    border: '1px solid rgba(0,0,0,0.08)',
-    borderTop: '3px solid #e11d48',
-    borderRadius: 12,
-    padding: 28,
-    width: 420,
-    boxShadow: '0 8px 40px rgba(0,0,0,0.15)',
-    maxHeight: '90vh',
-    overflowY: 'auto',
+    background:   T.surface,
+    borderTop:    `3px solid ${C.burntOrange}`,
+    borderRadius: 14,
+    padding:      24,
+    width:        600,
+    maxWidth:     '96vw',
+    maxHeight:    '92vh',
+    overflowY:    'auto',
+    boxShadow:    '0 8px 40px rgba(47,47,47,0.18)',
+    display:      'flex',
+    flexDirection: 'column',
+    gap:          16,
+  },
+  header: {
+    display:        'flex',
+    alignItems:     'flex-start',
+    justifyContent: 'space-between',
   },
   badge: {
-    display: 'inline-block',
-    fontSize: 10,
-    fontWeight: 700,
+    display:      'inline-block',
+    fontSize:     10,
+    fontWeight:   700,
     letterSpacing: '0.1em',
-    border: '1px solid rgba(225,29,72,0.3)',
+    border:       `1px solid ${C.burntOrange}50`,
     borderRadius: 4,
-    padding: '2px 7px',
-    marginBottom: 10,
-    color: '#e11d48',
+    padding:      '2px 7px',
+    color:        C.burntOrange,
+    marginBottom: 6,
   },
   title: {
-    color: '#111827',
-    fontSize: 17,
-    fontWeight: 600,
-    marginBottom: 16,
+    fontSize:   18,
+    fontWeight: 700,
+    color:      T.text,
   },
-  dropzone: {
-    border: '2px dashed rgba(0,0,0,0.12)',
-    borderRadius: 8,
-    padding: '28px 20px',
-    textAlign: 'center',
-    cursor: 'pointer',
-    marginBottom: 16,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 6,
-    transition: 'border-color 0.15s',
-  },
-  dropIcon: {
-    fontSize: 28,
+  closeBtn: {
+    background: 'transparent',
+    border:     'none',
+    color:      T.textFaint,
+    fontSize:   16,
+    cursor:     'pointer',
+    padding:    4,
     lineHeight: 1,
   },
-  dropText: {
-    color: '#111827',
-    fontSize: 14,
-    fontWeight: 500,
-  },
-  dropSub: {
-    color: 'rgba(0,0,0,0.4)',
-    fontSize: 12,
-  },
-  previewRow: {
+  batchRow: {
     display: 'flex',
-    gap: 12,
-    marginBottom: 16,
-    alignItems: 'flex-start',
+    gap:     12,
+    flexWrap: 'wrap',
   },
-  previewImg: {
-    width: 90,
-    height: 90,
-    objectFit: 'cover',
-    borderRadius: 8,
-    border: '1px solid rgba(0,0,0,0.08)',
-    flexShrink: 0,
-  },
-  exifBox: {
-    flex: 1,
-    display: 'flex',
+  batchLabel: {
+    flex:          1,
+    minWidth:      160,
+    display:       'flex',
     flexDirection: 'column',
-    gap: 5,
-    paddingTop: 2,
-  },
-  exifLine: {
-    fontSize: 12,
-    color: 'rgba(0,0,0,0.55)',
-    lineHeight: 1.4,
-  },
-  changeBtn: {
-    marginTop: 4,
-    background: 'transparent',
-    border: '1px solid rgba(0,0,0,0.1)',
-    borderRadius: 5,
-    color: 'rgba(0,0,0,0.45)',
-    fontSize: 11,
-    padding: '3px 8px',
-    cursor: 'pointer',
-    alignSelf: 'flex-start',
-    fontFamily: 'inherit',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 13,
-    marginBottom: 18,
-  },
-  label: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 5,
-    color: 'rgba(0,0,0,0.5)',
-    fontSize: 11,
-    fontWeight: 600,
+    gap:           5,
+    color:         T.textMuted,
+    fontSize:      11,
+    fontWeight:    600,
     textTransform: 'uppercase',
     letterSpacing: '0.07em',
   },
   optional: {
-    fontWeight: 400,
+    fontWeight:    400,
     textTransform: 'none',
     letterSpacing: 0,
-    color: 'rgba(0,0,0,0.35)',
+    color:         T.textFaint,
   },
-  input: {
-    background: 'rgba(0,0,0,0.03)',
-    border: '1px solid rgba(0,0,0,0.1)',
+  batchSelect: {
+    background:   T.surfaceBorder,
+    border:       `1px solid ${T.surfaceBorder}`,
     borderRadius: 6,
-    color: '#111827',
-    fontSize: 13,
-    padding: '7px 10px',
-    outline: 'none',
-    fontFamily: 'inherit',
+    color:        T.text,
+    fontSize:     13,
+    padding:      '7px 10px',
+    fontFamily:   'inherit',
+  },
+  tagSection: {
+    display:       'flex',
+    flexDirection: 'column',
+    gap:           7,
+  },
+  tagSectionLabel: {
+    color:         T.textMuted,
+    fontSize:      11,
+    fontWeight:    600,
+    textTransform: 'uppercase',
+    letterSpacing: '0.07em',
+  },
+  tagChips: {
+    display:  'flex',
+    flexWrap: 'wrap',
+    gap:      5,
+  },
+  tagChip: {
+    display:       'inline-flex',
+    alignItems:    'center',
+    padding:       '4px 10px',
+    borderRadius:  20,
+    borderWidth:   1,
+    borderStyle:   'solid',
+    borderColor:   T.surfaceBorder,
+    background:    'transparent',
+    color:         T.textMuted,
+    fontSize:      12,
+    fontWeight:    500,
+    cursor:        'pointer',
+    transition:    'all 0.12s',
+    fontFamily:    'inherit',
+  },
+  dropzone: {
+    border:         '2px dashed',
+    borderRadius:   10,
+    padding:        '22px 16px',
+    textAlign:      'center',
+    cursor:         'pointer',
+    display:        'flex',
+    flexDirection:  'column',
+    alignItems:     'center',
+    gap:            5,
+    transition:     'all 0.15s',
+  },
+  dropIcon: {
+    fontSize:   26,
+    lineHeight: 1,
+  },
+  dropText: {
+    color:      T.text,
+    fontSize:   14,
+    fontWeight: 500,
+  },
+  dropSub: {
+    color:    'rgba(0,0,0,0.4)',
+    fontSize: 12,
+  },
+  grid: {
+    display:             'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+    gap:                 10,
+  },
+  card: {
+    border:       '1.5px solid',
+    borderRadius: 9,
+    overflow:     'hidden',
+    position:     'relative',
+    background:   T.surfaceBorder,
+    display:      'flex',
+    flexDirection: 'column',
+  },
+  cardRemove: {
+    position:   'absolute',
+    top:        5,
+    right:      5,
+    zIndex:     2,
+    background: 'rgba(0,0,0,0.55)',
+    border:     'none',
+    borderRadius: '50%',
+    color:      '#fff',
+    width:      20,
+    height:     20,
+    fontSize:   9,
+    cursor:     'pointer',
+    display:    'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1,
+    padding:    0,
+  },
+  thumb: {
+    width:      '100%',
+    height:     110,
+    objectFit:  'cover',
+    display:    'block',
+  },
+  statusBar: {
+    position:   'absolute',
+    top:        0,
+    left:       0,
+    right:      0,
+    padding:    '4px 8px',
+    color:      '#fff',
+    fontSize:   11,
+    fontWeight: 600,
+    textAlign:  'center',
+  },
+  cardInfo: {
+    padding:       '7px 8px',
+    display:       'flex',
+    flexDirection: 'column',
+    gap:           4,
+  },
+  cardFilename: {
+    fontSize:  11,
+    color:     T.textMuted,
+    fontWeight: 500,
+  },
+  exifRow: {
+    display: 'flex',
+    gap:     4,
+    flexWrap: 'wrap',
+  },
+  gpsChip: {
+    fontSize:    10,
+    fontWeight:  600,
+    padding:     '2px 6px',
+    borderRadius: 4,
+    background:  'rgba(0,0,0,0.05)',
+    color:       'rgba(0,0,0,0.4)',
+    alignSelf:   'flex-start',
+  },
+  cardNotes: {
+    background:   T.surface,
+    border:       `1px solid ${T.surfaceBorder}`,
+    borderRadius: 5,
+    color:        T.text,
+    fontSize:     11,
+    padding:      '5px 7px',
+    resize:       'none',
+    fontFamily:   'inherit',
+    marginTop:    2,
+  },
+  progress: {
+    position:   'relative',
+    height:     24,
+    background: 'rgba(0,0,0,0.05)',
+    borderRadius: 6,
+    overflow:   'hidden',
+    display:    'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressBar: {
+    position:   'absolute',
+    left:       0,
+    top:        0,
+    bottom:     0,
+    background: T.brand,
+    transition: 'width 0.3s ease',
+  },
+  progressText: {
+    position:   'relative',
+    fontSize:   11,
+    fontWeight: 600,
+    color:      T.text,
+    zIndex:     1,
+  },
+  errorNote: {
+    background:   T.dangerBg,
+    border:       `1px solid ${T.dangerBorder}`,
+    borderRadius: 6,
+    color:        T.danger,
+    fontSize:     12,
+    padding:      '8px 12px',
+    textAlign:    'center',
   },
   actions: {
     display: 'flex',
-    gap: 10,
+    gap:     10,
   },
   cancelBtn: {
-    flex: 1,
+    flex:       1,
     background: 'transparent',
-    border: '1px solid rgba(0,0,0,0.1)',
-    borderRadius: 6,
-    color: 'rgba(0,0,0,0.5)',
-    fontSize: 13,
-    padding: '9px 0',
-    cursor: 'pointer',
+    border:     `1px solid ${T.surfaceBorder}`,
+    borderRadius: 7,
+    color:      T.textMuted,
+    fontSize:   13,
+    padding:    '10px 0',
+    cursor:     'pointer',
     fontFamily: 'inherit',
   },
   saveBtn: {
-    flex: 2,
-    background: '#e11d48',
-    border: 'none',
-    borderRadius: 6,
-    color: '#fff',
-    fontSize: 13,
+    flex:       2,
+    background: C.burntOrange,
+    border:     'none',
+    borderRadius: 7,
+    color:      T.textOnDark,
+    fontSize:   13,
     fontWeight: 700,
-    padding: '9px 0',
-    cursor: 'pointer',
+    padding:    '10px 0',
+    cursor:     'pointer',
     fontFamily: 'inherit',
   },
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { POINT_TYPES, pointTypeFromMode } from '../constants/pointTypes'
+import { T } from '../constants/theme'
 
 export default function DrawPointModal({ drawMode, onSave, onCancel, saving }) {
   const pt = pointTypeFromMode(drawMode) ?? POINT_TYPES[0]
@@ -96,13 +97,13 @@ const styles = {
     backdropFilter: 'blur(4px)',
   },
   modal: {
-    background: '#fff',
-    border: '1px solid rgba(0,0,0,0.08)',
+    background: T.surface,
+    border: `1px solid ${T.surfaceBorder}`,
     borderTop: '3px solid',
     borderRadius: 12,
     padding: 28,
     width: 360,
-    boxShadow: '0 8px 40px rgba(0,0,0,0.15)',
+    boxShadow: '0 8px 40px rgba(47,47,47,0.15)',
   },
   badge: {
     display: 'inline-block',
@@ -115,7 +116,7 @@ const styles = {
     marginBottom: 10,
   },
   title: {
-    color: '#111827',
+    color: T.text,
     fontSize: 17,
     fontWeight: 600,
     marginBottom: 18,
@@ -129,17 +130,17 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: 5,
-    color: 'rgba(0,0,0,0.5)',
+    color: T.textMuted,
     fontSize: 11,
     fontWeight: 600,
     textTransform: 'uppercase',
     letterSpacing: '0.07em',
   },
   input: {
-    background: 'rgba(0,0,0,0.03)',
-    border: '1px solid rgba(0,0,0,0.1)',
+    background: T.surfaceBorder,
+    border: `1px solid ${T.surfaceBorder}`,
     borderRadius: 6,
-    color: '#111827',
+    color: T.text,
     fontSize: 13,
     padding: '7px 10px',
     outline: 'none',
@@ -153,9 +154,9 @@ const styles = {
   cancelBtn: {
     flex: 1,
     background: 'transparent',
-    border: '1px solid rgba(0,0,0,0.1)',
+    border: `1px solid ${T.surfaceBorder}`,
     borderRadius: 6,
-    color: 'rgba(0,0,0,0.5)',
+    color: T.textMuted,
     fontSize: 13,
     padding: '9px 0',
     cursor: 'pointer',
@@ -165,7 +166,7 @@ const styles = {
     flex: 2,
     border: 'none',
     borderRadius: 6,
-    color: '#fff',
+    color: T.textOnDark,
     fontSize: 13,
     fontWeight: 700,
     padding: '9px 0',

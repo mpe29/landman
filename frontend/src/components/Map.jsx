@@ -6,6 +6,8 @@ import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css'
 import { api } from '../api'
 import { POINT_TYPES, POINT_DRAW_MODES } from '../constants/pointTypes'
 import { ACTIVE_LAYERS } from '../constants/layers'
+import { filterObservations } from '../utils/obsFilter'
+import { T, C } from '../constants/theme'
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN
 
@@ -18,22 +20,26 @@ const POINT_COLOR_EXPR = [
 
 // Fetch all spatial data and partition into layer buckets
 async function loadAllData() {
-  const [properties, areas, pointAssets, observations] = await Promise.all([
+  const [properties, areas, pointAssets, observations, livestockCounts] = await Promise.all([
     api.getProperties(),
     api.getAreas(),
     api.getPointAssets(),
     api.getObservations(),
+    api.getLivestockCampCounts(),
   ])
   return {
     properties,
-    farms:        areas.filter((a) => a.level === 'farm'),
-    camps:        areas.filter((a) => a.level === 'camp'),
-    point_assets: pointAssets,
+    farms:            areas.filter((a) => a.level === 'farm'),
+    camps:            areas.filter((a) => a.level === 'camp'),
+    point_assets:     pointAssets,
     observations,
+    livestock_counts: livestockCounts,
   }
 }
 
 // Convert DB rows to GeoJSON FeatureCollection
+// tag_ids is an array — excluded to avoid Mapbox property serialization quirks
+const EXCLUDE_KEYS = new Set(['boundary', 'tag_ids'])
 function toFC(items, geomKey = 'boundary') {
   return {
     type: 'FeatureCollection',
@@ -42,19 +48,36 @@ function toFC(items, geomKey = 'boundary') {
       .map((x) => ({
         type: 'Feature',
         geometry: x[geomKey],
-        // Spread all non-geometry fields into properties so FeaturePanel gets them
         properties: Object.fromEntries(
-          Object.entries(x).filter(([k]) => k !== geomKey && k !== 'boundary')
+          Object.entries(x).filter(([k]) => k !== geomKey && !EXCLUDE_KEYS.has(k))
         ),
       })),
   }
 }
 
-export default function Map({ mode, reloadKey, layerVisibility, onDrawComplete, onDataLoaded, onFeatureClick }) {
-  const mapContainer = useRef(null)
-  const map          = useRef(null)
-  const draw         = useRef(null)
+export default function Map({
+  mode,
+  reloadKey,
+  layerVisibility,
+  obsFilter,
+  homeView,
+  onSetHome,
+  onRestoreVisibility,
+  onDrawComplete,
+  onDataLoaded,
+  onFeatureClick,
+  selectedObsId,
+  heatmap,
+}) {
+  const mapContainer     = useRef(null)
+  const map              = useRef(null)
+  const draw             = useRef(null)
+  const heatmapRef       = useRef(false)        // shadow for layerVisibility effect
+  const onFeatureClickRef = useRef(onFeatureClick) // always-current ref (avoids stale closure)
   const [ready, setReady] = useState(false)
+
+  // Keep the ref current whenever the prop changes
+  useEffect(() => { onFeatureClickRef.current = onFeatureClick }, [onFeatureClick])
 
   // ── Init map & draw once ───────────────────────────────────────
   useEffect(() => {
@@ -65,6 +88,7 @@ export default function Map({ mode, reloadKey, layerVisibility, onDrawComplete, 
       style: 'mapbox://styles/mapbox/satellite-streets-v12',
       center: [25, -25],
       zoom: 4,
+      clickTolerance: 10,  // default 3px — increased for mobile finger imprecision
     })
 
     draw.current = new MapboxDraw({ displayControlsDefault: false })
@@ -72,7 +96,18 @@ export default function Map({ mode, reloadKey, layerVisibility, onDrawComplete, 
     map.current.addControl(new mapboxgl.NavigationControl(), 'top-right')
 
     map.current.on('load', () => {
-      // Create sources + layers for every active layer in the registry
+      // ── State for mobile touch-dedup ─────────────────────────────
+      // touchend fires before the synthesized Mapbox click. When the
+      // touchend handler finds and dispatches a feature, it sets
+      // touchHandled = true so the subsequent layer click is ignored.
+      let touchHandled = false
+      let touchHandledTimer = null
+      const markTouchHandled = () => {
+        touchHandled = true
+        clearTimeout(touchHandledTimer)
+        touchHandledTimer = setTimeout(() => { touchHandled = false }, 600)
+      }
+
       ACTIVE_LAYERS.forEach((layer) => {
         map.current.addSource(layer.id, {
           type: 'geojson',
@@ -81,55 +116,157 @@ export default function Map({ mode, reloadKey, layerVisibility, onDrawComplete, 
 
         if (layer.type === 'polygon') {
           map.current.addLayer({
-            id:     `${layer.id}-fill`,
-            type:   'fill',
-            source: layer.id,
+            id: `${layer.id}-fill`, type: 'fill', source: layer.id,
             layout: { visibility: layer.defaultVisible ? 'visible' : 'none' },
             paint:  { 'fill-color': layer.color, 'fill-opacity': layer.fillOpacity },
           })
           map.current.addLayer({
-            id:     `${layer.id}-outline`,
-            type:   'line',
-            source: layer.id,
+            id: `${layer.id}-outline`, type: 'line', source: layer.id,
             layout: { visibility: layer.defaultVisible ? 'visible' : 'none' },
             paint:  { 'line-color': layer.color, 'line-width': layer.lineWidth },
           })
-          // Clicks on fill layer
           map.current.on('click', `${layer.id}-fill`, (e) => {
-            onFeatureClick?.({ featureType: layer.featureType, data: e.features[0].properties })
+            if (touchHandled) { touchHandled = false; return }
+            onFeatureClickRef.current?.({ featureType: layer.featureType, data: e.features[0].properties })
           })
           map.current.on('mouseenter', `${layer.id}-fill`, () => { map.current.getCanvas().style.cursor = 'pointer' })
           map.current.on('mouseleave', `${layer.id}-fill`, () => { map.current.getCanvas().style.cursor = '' })
 
         } else if (layer.type === 'point') {
           map.current.addLayer({
-            id:     `${layer.id}-circle`,
-            type:   'circle',
-            source: layer.id,
+            id: `${layer.id}-circle`, type: 'circle', source: layer.id,
             layout: { visibility: layer.defaultVisible ? 'visible' : 'none' },
-            paint:  {
-              'circle-radius':        layer.circleRadius ?? 7,
-              'circle-color':         layer.color === 'multi' ? POINT_COLOR_EXPR : layer.color,
-              'circle-stroke-color':  '#fff',
-              'circle-stroke-width':  1.5,
+            paint: {
+              'circle-radius':       layer.circleRadius ?? 7,
+              'circle-color':        layer.color === 'multi' ? POINT_COLOR_EXPR : layer.color,
+              'circle-stroke-color': '#fff',
+              'circle-stroke-width': 1.5,
             },
           })
           map.current.on('click', `${layer.id}-circle`, (e) => {
-            onFeatureClick?.({ featureType: layer.featureType, data: e.features[0].properties })
+            if (touchHandled) { touchHandled = false; return }
+            onFeatureClickRef.current?.({ featureType: layer.featureType, data: e.features[0].properties })
           })
           map.current.on('mouseenter', `${layer.id}-circle`, () => { map.current.getCanvas().style.cursor = 'pointer' })
           map.current.on('mouseleave', `${layer.id}-circle`, () => { map.current.getCanvas().style.cursor = '' })
 
         } else if (layer.type === 'line') {
           map.current.addLayer({
-            id:     `${layer.id}-line`,
-            type:   'line',
-            source: layer.id,
+            id: `${layer.id}-line`, type: 'line', source: layer.id,
             layout: { visibility: layer.defaultVisible ? 'visible' : 'none' },
             paint:  { 'line-color': layer.color, 'line-width': layer.lineWidth },
           })
+        } else if (layer.type === 'symbol') {
+          map.current.addLayer({
+            id: `${layer.id}-symbol`, type: 'symbol', source: layer.id,
+            layout: {
+              visibility:              layer.defaultVisible ? 'visible' : 'none',
+              'text-field':            ['get', 'label'],
+              'text-size':             13,
+              'text-anchor':           'center',
+              'text-offset':           [0, 0],
+              'text-allow-overlap':    true,
+              'text-ignore-placement': true,
+            },
+            paint: {
+              'text-color':      '#2F2F2F',
+              'text-halo-color': '#F3F1E8',
+              'text-halo-width': 2,
+            },
+          })
         }
       })
+
+      // ── Observations heatmap — toggled separately, starts hidden ─
+      map.current.addLayer({
+        id: 'observations-heat',
+        type: 'heatmap',
+        source: 'observations',
+        layout: { visibility: 'none' },
+        paint: {
+          'heatmap-weight': 1,
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 3],
+          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 5, 9, 28],
+          'heatmap-color': [
+            'interpolate', ['linear'], ['heatmap-density'],
+            0,    'rgba(78,91,60,0)',
+            0.25, C.pistachioGreen,
+            0.5,  C.dryGrassYellow,
+            0.75, C.burntOrange,
+            1,    '#b91c1c',
+          ],
+          'heatmap-opacity': 0.85,
+        },
+      }, 'observations-circle') // insert behind the circles
+
+      // ── Mobile: canvas touchend for reliable small-feature taps ──
+      // map.on('click', layerId, ...) works on desktop but on iOS the
+      // rendered circle is only 6px radius — too small for a fingertip.
+      // Hooking touchend on the raw canvas gives us a wider bbox query
+      // (44px diameter) while the movement threshold prevents misfires
+      // during map panning. touchHandled prevents the subsequent Mapbox
+      // synthesised click event from firing a second dispatch.
+      const polyFillIds  = ACTIVE_LAYERS.filter((l) => l.type === 'polygon').map((l) => `${l.id}-fill`)
+      const pointCircIds = ACTIVE_LAYERS.filter((l) => l.type === 'point' && l.id !== 'observations').map((l) => `${l.id}-circle`)
+
+      const canvas = map.current.getCanvas()
+      let touchStartX = 0, touchStartY = 0
+
+      canvas.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+          touchStartX = e.touches[0].clientX
+          touchStartY = e.touches[0].clientY
+        }
+      }, { passive: true })
+
+      canvas.addEventListener('touchend', (e) => {
+        if (e.changedTouches.length !== 1) return
+        const touch = e.changedTouches[0]
+        // Ignore if the finger moved (pan gesture)
+        if (Math.abs(touch.clientX - touchStartX) > 8 ||
+            Math.abs(touch.clientY - touchStartY) > 8) return
+
+        const rect = canvas.getBoundingClientRect()
+        const cx = touch.clientX - rect.left
+        const cy = touch.clientY - rect.top
+
+        // 1. Observations — 44px diameter hit zone
+        const obsHits = map.current.queryRenderedFeatures(
+          [[cx - 22, cy - 22], [cx + 22, cy + 22]],
+          { layers: ['observations-circle'] },
+        )
+        if (obsHits.length > 0) {
+          markTouchHandled()
+          onFeatureClickRef.current?.({ featureType: 'observation', data: obsHits[0].properties })
+          return
+        }
+
+        // 2. Point assets — 28px diameter hit zone
+        if (pointCircIds.length > 0) {
+          const ptHits = map.current.queryRenderedFeatures(
+            [[cx - 14, cy - 14], [cx + 14, cy + 14]],
+            { layers: pointCircIds },
+          )
+          if (ptHits.length > 0) {
+            markTouchHandled()
+            const lb    = ptHits[0].layer.id.replace('-circle', '')
+            const layer = ACTIVE_LAYERS.find((l) => l.id === lb)
+            onFeatureClickRef.current?.({ featureType: layer?.featureType, data: ptHits[0].properties })
+            return
+          }
+        }
+
+        // 3. Polygons — exact point (large targets)
+        if (polyFillIds.length > 0) {
+          const polyHits = map.current.queryRenderedFeatures([cx, cy], { layers: polyFillIds })
+          if (polyHits.length > 0) {
+            markTouchHandled()
+            const lb    = polyHits[0].layer.id.replace('-fill', '')
+            const layer = ACTIVE_LAYERS.find((l) => l.id === lb)
+            onFeatureClickRef.current?.({ featureType: layer?.featureType, data: polyHits[0].properties })
+          }
+        }
+      }, { passive: true })
 
       setReady(true)
     })
@@ -140,19 +277,29 @@ export default function Map({ mode, reloadKey, layerVisibility, onDrawComplete, 
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Re-apply observation filter when it changes (no DB refetch) ─
+  const lastObsRef = useRef([])
+  useEffect(() => {
+    if (!ready) return
+    const filtered = filterObservations(lastObsRef.current, obsFilter)
+    map.current.getSource('observations')?.setData(toFC(filtered, 'geom'))
+  }, [ready, obsFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Sync layer visibility from props ──────────────────────────
   useEffect(() => {
     if (!ready || !layerVisibility) return
     ACTIVE_LAYERS.forEach((layer) => {
       const vis = layerVisibility[layer.id] !== false ? 'visible' : 'none'
-      const mapLayerIds =
+      const ids =
         layer.type === 'polygon' ? [`${layer.id}-fill`, `${layer.id}-outline`]
-        : layer.type === 'point' ? [`${layer.id}-circle`]
+        : layer.type === 'point'  ? [`${layer.id}-circle`]
+        : layer.type === 'symbol' ? [`${layer.id}-symbol`]
         : [`${layer.id}-line`]
-      mapLayerIds.forEach((lid) => {
-        if (map.current.getLayer(lid)) {
-          map.current.setLayoutProperty(lid, 'visibility', vis)
-        }
+      ids.forEach((lid) => {
+        if (!map.current.getLayer(lid)) return
+        // While heatmap is active, keep observations circles hidden
+        const effectiveVis = (lid === 'observations-circle' && heatmapRef.current) ? 'none' : vis
+        map.current.setLayoutProperty(lid, 'visibility', effectiveVis)
       })
     })
   }, [ready, layerVisibility])
@@ -177,21 +324,25 @@ export default function Map({ mode, reloadKey, layerVisibility, onDrawComplete, 
     if (!ready) return
 
     loadAllData().then((buckets) => {
-      // Feed each layer source
       map.current.getSource('properties')?.setData(toFC(buckets.properties))
       map.current.getSource('farms')?.setData(toFC(buckets.farms))
       map.current.getSource('camps')?.setData(toFC(buckets.camps))
       map.current.getSource('point_assets')?.setData(toFC(buckets.point_assets, 'geom'))
-      map.current.getSource('observations')?.setData(toFC(buckets.observations, 'geom'))
+      map.current.getSource('livestock_counts')?.setData(toFC(buckets.livestock_counts, 'geom'))
 
-      // Notify App with raw data for dropdowns
+      // Apply observation filter before feeding to map source
+      lastObsRef.current = buckets.observations
+      const filteredObs = filterObservations(buckets.observations, obsFilter)
+      map.current.getSource('observations')?.setData(toFC(filteredObs, 'geom'))
+
       onDataLoaded?.({
-        properties: buckets.properties,
-        farms:      buckets.farms,
-        camps:      buckets.camps,
+        properties:   buckets.properties,
+        farms:        buckets.farms,
+        camps:        buckets.camps,
+        observations: buckets.observations, // raw (unfiltered) for FilterPanel
       })
 
-      // Fit to all polygons on first load
+      // On first load: fit to all polygons, then auto-save as home if none saved yet
       if (reloadKey === 0) {
         const allPolygons = [
           ...toFC(buckets.properties).features,
@@ -204,10 +355,131 @@ export default function Map({ mode, reloadKey, layerVisibility, onDrawComplete, 
             f.geometry.coordinates[0].forEach((c) => bounds.extend(c))
           )
           map.current.fitBounds(bounds, { padding: 60 })
+
+          // Auto-save initial view as home if not yet set
+          if (!homeView) {
+            map.current.once('moveend', () => {
+              const c = map.current.getCenter()
+              onSetHome?.({ center: [c.lng, c.lat], zoom: map.current.getZoom() })
+            })
+          }
         }
       }
     })
   }, [ready, reloadKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
+  // ── Highlight selected observation (Google Images-style invert) ─
+  useEffect(() => {
+    if (!ready) return
+    const layer = 'observations-circle'
+    if (!map.current.getLayer(layer)) return
+    if (selectedObsId) {
+      map.current.setPaintProperty(layer, 'circle-radius',
+        ['case', ['==', ['get', 'id'], selectedObsId], 10, 6])
+      map.current.setPaintProperty(layer, 'circle-color',
+        ['case', ['==', ['get', 'id'], selectedObsId], '#fff', C.burntOrange])
+      map.current.setPaintProperty(layer, 'circle-stroke-color',
+        ['case', ['==', ['get', 'id'], selectedObsId], C.burntOrange, '#fff'])
+      map.current.setPaintProperty(layer, 'circle-stroke-width',
+        ['case', ['==', ['get', 'id'], selectedObsId], 3, 1.5])
+    } else {
+      map.current.setPaintProperty(layer, 'circle-radius', 6)
+      map.current.setPaintProperty(layer, 'circle-color', C.burntOrange)
+      map.current.setPaintProperty(layer, 'circle-stroke-color', '#fff')
+      map.current.setPaintProperty(layer, 'circle-stroke-width', 1.5)
+    }
+  }, [ready, selectedObsId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Toggle heatmap / circle view ──────────────────────────────
+  useEffect(() => {
+    if (!ready) return
+    heatmapRef.current = !!heatmap
+    if (map.current.getLayer('observations-heat'))
+      map.current.setLayoutProperty('observations-heat', 'visibility', heatmap ? 'visible' : 'none')
+    if (map.current.getLayer('observations-circle'))
+      map.current.setLayoutProperty('observations-circle', 'visibility', heatmap ? 'none' : 'visible')
+  }, [ready, heatmap])
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
+      {ready && (
+        <HomeControl
+          map={map.current}
+          homeView={homeView}
+          layerVisibility={layerVisibility}
+          onSetHome={onSetHome}
+          onRestoreVisibility={onRestoreVisibility}
+        />
+      )}
+    </div>
+  )
+}
+
+/* ── Home Control ────────────────────────────────────────────────── */
+
+function HomeControl({ map, homeView, layerVisibility, onSetHome, onRestoreVisibility }) {
+  const [flash, setFlash] = useState(null) // 'saved' | 'home'
+
+  const goHome = () => {
+    if (!homeView) return
+    map.flyTo({ center: homeView.center, zoom: homeView.zoom, duration: 1400 })
+    if (homeView.layerVisibility) onRestoreVisibility?.(homeView.layerVisibility)
+    setFlash('home')
+    setTimeout(() => setFlash(null), 1200)
+  }
+
+  const setHome = () => {
+    const c = map.getCenter()
+    onSetHome?.({ center: [c.lng, c.lat], zoom: map.getZoom() })
+    setFlash('saved')
+    setTimeout(() => setFlash(null), 1500)
+  }
+
+  return (
+    <div style={hc.wrap}>
+      <button
+        onClick={goHome}
+        disabled={!homeView}
+        title="Fly to home view"
+        style={{ ...hc.btn, opacity: homeView ? 1 : 0.4 }}
+      >
+        {flash === 'home' ? '✓' : '⌂'}
+      </button>
+      <button
+        onClick={setHome}
+        title="Save current view as home"
+        style={hc.btn}
+      >
+        {flash === 'saved' ? '✓' : '📍'}
+      </button>
+    </div>
+  )
+}
+
+const hc = {
+  wrap: {
+    position: 'absolute',
+    top: 120,
+    right: 10,
+    zIndex: 5,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+  btn: {
+    width: 30,
+    height: 30,
+    background: T.surface,
+    border: `1px solid ${T.surfaceBorder}`,
+    borderRadius: 6,
+    boxShadow: T.surfaceShadow,
+    fontSize: 15,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.15s',
+    padding: 0,
+  },
 }
