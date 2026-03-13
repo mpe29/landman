@@ -1,46 +1,122 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Map from './components/Map'
 import Toolbar from './components/Toolbar'
+import LayerControl from './components/LayerControl'
 import DrawAreaModal from './components/DrawAreaModal'
 import DrawPointModal from './components/DrawPointModal'
+import ObservationModal from './components/ObservationModal'
+import ObservationFilterPanel from './components/ObservationFilterPanel'
 import FeaturePanel from './components/FeaturePanel'
 import { api } from './api'
-import { POINT_DRAW_MODES, pointTypeFromMode } from './constants/pointTypes'
+import { POINT_DRAW_MODES } from './constants/pointTypes'
+import { DEFAULT_VISIBILITY } from './constants/layers'
+import { DEFAULT_OBS_FILTER, filterObservations } from './utils/obsFilter'
 
 const AREA_DRAW_MODES = new Set(['draw_property', 'draw_farm', 'draw_camp'])
+
+// ── localStorage helpers ───────────────────────────────────────────
+function loadLS(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback }
+  catch { return fallback }
+}
+function saveLS(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)) } catch {}
+}
 
 export default function App() {
   const [mode, setMode]                   = useState('view')
   const [reloadKey, setReloadKey]         = useState(0)
   const [pendingGeometry, setPendingGeometry] = useState(null)
   const [saving, setSaving]               = useState(false)
-  const [loadedData, setLoadedData]       = useState({ properties: [], farms: [], camps: [] })
-  const [selectedFeature, setSelectedFeature] = useState(null) // { featureType, data }
+  const [loadedData, setLoadedData]       = useState({ properties: [], farms: [], camps: [], observations: [] })
+  const [selectedFeature, setSelectedFeature] = useState(null)
+  const [showObsModal, setShowObsModal]   = useState(false)
+  const [operations, setOperations]       = useState([])
 
+  // ── Persisted layer visibility ─────────────────────────────────
+  const [layerVisibility, setLayerVisibility] = useState(() =>
+    ({ ...DEFAULT_VISIBILITY, ...loadLS('landman_layer_visibility', {}) })
+  )
+  const handleLayerToggle = (id, visible) => {
+    setLayerVisibility((prev) => {
+      const next = { ...prev, [id]: visible }
+      saveLS('landman_layer_visibility', next)
+      return next
+    })
+  }
+
+  // ── Persisted home view ────────────────────────────────────────
+  const [homeView, setHomeView] = useState(() => loadLS('landman_home_view', null))
+
+  const handleSetHome = ({ center, zoom }) => {
+    const hv = { center, zoom, layerVisibility }
+    setHomeView(hv)
+    saveLS('landman_home_view', hv)
+  }
+
+  const handleRestoreVisibility = (vis) => {
+    setLayerVisibility(vis)
+    saveLS('landman_layer_visibility', vis)
+  }
+
+  // ── Observation filter (persisted) ────────────────────────────
+  const [obsFilter, setObsFilter] = useState(() =>
+    loadLS('landman_obs_filter', DEFAULT_OBS_FILTER)
+  )
+  const handleObsFilterChange = (next) => {
+    setObsFilter(next)
+    saveLS('landman_obs_filter', next)
+  }
+
+  // Filtered count (for the panel header badge)
+  const filteredObsCount = useMemo(
+    () => filterObservations(loadedData.observations, obsFilter).length,
+    [loadedData.observations, obsFilter]
+  )
+
+  // ── Heatmap mode ──────────────────────────────────────────────
+  const [heatmap, setHeatmap] = useState(false)
+
+  // ── Tag types ─────────────────────────────────────────────────
+  const [tagTypes, setTagTypes] = useState([])
+
+  useEffect(() => {
+    const propertyId = loadedData.properties[0]?.id
+    api.getObservationTagTypes(propertyId || null).then(setTagTypes).catch(console.error)
+  }, [loadedData.properties])
+
+  const handleAddTagType = async (name, emoji, color) => {
+    const propertyId = loadedData.properties[0]?.id
+    const created = await api.createObservationTagType({ propertyId, name, emoji, color })
+    setTagTypes((prev) => [...prev, created])
+  }
+
+  // ── Operations ────────────────────────────────────────────────
+  useEffect(() => {
+    const propertyId = loadedData.properties[0]?.id
+    if (!propertyId) return
+    api.getOperations(propertyId).then(setOperations).catch(console.error)
+  }, [loadedData.properties])
+
+  // ── Mode helpers ──────────────────────────────────────────────
   const reload = () => setReloadKey((k) => k + 1)
 
   const handleModeChange = (newMode) => {
     setMode(newMode)
     if (newMode === 'view') setPendingGeometry(null)
-    // Entering a draw mode clears the selection panel
     if (newMode !== 'view') setSelectedFeature(null)
   }
 
-  const handleDrawComplete = (geometry) => {
-    setPendingGeometry(geometry)
-  }
+  const handleDrawComplete = (geometry) => setPendingGeometry(geometry)
 
-  const handleDataLoaded = (data) => {
-    setLoadedData(data)
-  }
+  const handleDataLoaded = (data) => setLoadedData(data)
 
   const handleFeatureClick = (feature) => {
-    // Don't open panel while in a draw mode
     if (mode !== 'view') return
     setSelectedFeature(feature)
   }
 
-  // ---- Area save (property / farm / camp) ----
+  // ── Area save (property / farm / camp) ───────────────────────
   const handleSaveArea = async ({ name, owner, parentId }) => {
     if (!pendingGeometry) return
     setSaving(true)
@@ -67,7 +143,7 @@ export default function App() {
     }
   }
 
-  // ---- Point asset save ----
+  // ── Point asset save ─────────────────────────────────────────
   const handleSavePoint = async ({ name, type, condition, notes }) => {
     if (!pendingGeometry) return
     setSaving(true)
@@ -93,12 +169,36 @@ export default function App() {
       <Map
         mode={mode}
         reloadKey={reloadKey}
+        layerVisibility={layerVisibility}
+        obsFilter={obsFilter}
+        homeView={homeView}
+        onSetHome={handleSetHome}
+        onRestoreVisibility={handleRestoreVisibility}
         onDrawComplete={handleDrawComplete}
         onDataLoaded={handleDataLoaded}
         onFeatureClick={handleFeatureClick}
+        selectedObsId={selectedFeature?.featureType === 'observation' ? selectedFeature.data?.id : null}
+        heatmap={heatmap}
       />
 
-      <Toolbar mode={mode} onModeChange={handleModeChange} />
+      <Toolbar
+        mode={mode}
+        onModeChange={handleModeChange}
+        onObservationClick={() => setShowObsModal(true)}
+      />
+
+      <LayerControl visibility={layerVisibility} onChange={handleLayerToggle} />
+
+      <ObservationFilterPanel
+        observations={loadedData.observations}
+        tagTypes={tagTypes}
+        filter={obsFilter}
+        onChange={handleObsFilterChange}
+        onAddTagType={handleAddTagType}
+        filteredCount={filteredObsCount}
+        heatmap={heatmap}
+        onHeatmapToggle={() => setHeatmap((h) => !h)}
+      />
 
       {/* Area draw modal */}
       {pendingGeometry && isAreaDraw && (
@@ -122,10 +222,24 @@ export default function App() {
         />
       )}
 
+      {/* Observation modal */}
+      {showObsModal && (
+        <ObservationModal
+          propertyId={loadedData.properties[0]?.id}
+          operations={operations}
+          tagTypes={tagTypes}
+          onSaved={() => { setShowObsModal(false); reload() }}
+          onCancel={() => setShowObsModal(false)}
+        />
+      )}
+
       {/* Feature detail / edit panel */}
-      {selectedFeature && !pendingGeometry && (
+      {selectedFeature && !pendingGeometry && !showObsModal && (
         <FeaturePanel
           feature={selectedFeature}
+          camps={loadedData.camps}
+          propertyId={loadedData.properties[0]?.id}
+          tagTypes={tagTypes}
           onClose={() => setSelectedFeature(null)}
           onSaved={() => { reload(); setSelectedFeature(null) }}
           onDeleted={() => { reload(); setSelectedFeature(null) }}

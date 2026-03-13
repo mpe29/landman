@@ -1,0 +1,13 @@
+{
+  "name": "LANDMAN",
+  "short_name": "LANDMAN",
+  "description": "Farm and property mapping, livestock & observation management",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F3F1E8",
+  "theme_color": "#8FAF7A",
+  "icons": [
+    { "src": "/icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon.svg", "sizes": "any",     "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

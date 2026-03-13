@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { POINT_TYPES, pointTypeFromMode } from '../constants/pointTypes'
+import { T } from '../constants/theme'
 
 export default function DrawPointModal({ drawMode, onSave, onCancel, saving }) {
   const pt = pointTypeFromMode(drawMode) ?? POINT_TYPES[0]
@@ -92,17 +93,17 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'rgba(0,0,0,0.55)',
+    background: 'rgba(0,0,0,0.35)',
     backdropFilter: 'blur(4px)',
   },
   modal: {
-    background: '#0f1419',
-    border: '1px solid rgba(255,255,255,0.1)',
+    background: T.surface,
+    border: `1px solid ${T.surfaceBorder}`,
     borderTop: '3px solid',
     borderRadius: 12,
     padding: 28,
     width: 360,
-    boxShadow: '0 8px 40px rgba(0,0,0,0.7)',
+    boxShadow: '0 8px 40px rgba(47,47,47,0.15)',
   },
   badge: {
     display: 'inline-block',
@@ -115,7 +116,7 @@ const styles = {
     marginBottom: 10,
   },
   title: {
-    color: '#fff',
+    color: T.text,
     fontSize: 17,
     fontWeight: 600,
     marginBottom: 18,
@@ -129,20 +130,21 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: 5,
-    color: 'rgba(255,255,255,0.5)',
+    color: T.textMuted,
     fontSize: 11,
     fontWeight: 600,
     textTransform: 'uppercase',
     letterSpacing: '0.07em',
   },
   input: {
-    background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    background: T.surfaceBorder,
+    border: `1px solid ${T.surfaceBorder}`,
     borderRadius: 6,
-    color: '#fff',
+    color: T.text,
     fontSize: 13,
     padding: '7px 10px',
     outline: 'none',
+    fontFamily: 'inherit',
   },
   actions: {
     display: 'flex',
@@ -152,21 +154,23 @@ const styles = {
   cancelBtn: {
     flex: 1,
     background: 'transparent',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: `1px solid ${T.surfaceBorder}`,
     borderRadius: 6,
-    color: 'rgba(255,255,255,0.5)',
+    color: T.textMuted,
     fontSize: 13,
     padding: '9px 0',
     cursor: 'pointer',
+    fontFamily: 'inherit',
   },
   saveBtn: {
     flex: 2,
     border: 'none',
     borderRadius: 6,
-    color: '#0f1419',
+    color: T.textOnDark,
     fontSize: 13,
     fontWeight: 700,
     padding: '9px 0',
     cursor: 'pointer',
+    fontFamily: 'inherit',
   },
 }
