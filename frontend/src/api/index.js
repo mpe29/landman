@@ -15,11 +15,11 @@ export const api = {
     return data
   },
 
+  // propertyId optional — omit to load all areas (used by map)
   async getAreas(propertyId) {
-    const { data, error } = await supabase
-      .from('areas_geo')
-      .select('*')
-      .eq('property_id', propertyId)
+    let q = supabase.from('areas_geo').select('*')
+    if (propertyId) q = q.eq('property_id', propertyId)
+    const { data, error } = await q
     if (error) throw error
     return data
   },
@@ -64,13 +64,15 @@ export const api = {
     return data
   },
 
-  async createArea({ propertyId, name, type, notes, boundary }) {
+  async createArea({ propertyId, parentId, level, name, type, notes, boundary }) {
     const { data, error } = await supabase.rpc('create_area', {
       p_property_id: propertyId,
-      p_name: name,
-      p_type: type || null,
-      p_notes: notes || null,
-      p_boundary: boundary || null,
+      p_parent_id:   parentId || null,
+      p_level:       level || 'camp',
+      p_name:        name,
+      p_type:        type || null,
+      p_notes:       notes || null,
+      p_boundary:    boundary || null,
     })
     if (error) throw error
     return data
