@@ -33,11 +33,11 @@ export const api = {
     return data
   },
 
+  // propertyId optional — omit to load all point assets (used by map)
   async getPointAssets(propertyId) {
-    const { data, error } = await supabase
-      .from('point_assets_geo')
-      .select('*')
-      .eq('property_id', propertyId)
+    let q = supabase.from('point_assets_geo').select('*')
+    if (propertyId) q = q.eq('property_id', propertyId)
+    const { data, error } = await q
     if (error) throw error
     return data
   },
@@ -52,7 +52,7 @@ export const api = {
   },
 
   // ---------------------------------------------------------------
-  // Writes — use RPC functions so PostGIS can parse GeoJSON geometry
+  // Creates — use RPC functions so PostGIS can parse GeoJSON geometry
   // ---------------------------------------------------------------
   async createProperty({ name, owner, boundary }) {
     const { data, error } = await supabase.rpc('create_property', {
@@ -111,5 +111,50 @@ export const api = {
       .select()
     if (error) throw error
     return data[0]
+  },
+
+  // ---------------------------------------------------------------
+  // Updates — no geometry, so direct table access is fine
+  // ---------------------------------------------------------------
+  async updateArea(id, { name, type, notes }) {
+    const { error } = await supabase
+      .from('areas')
+      .update({ name, type: type || null, notes: notes || null })
+      .eq('id', id)
+    if (error) throw error
+  },
+
+  async updateProperty(id, { name, owner }) {
+    const { error } = await supabase
+      .from('properties')
+      .update({ name, owner: owner || null })
+      .eq('id', id)
+    if (error) throw error
+  },
+
+  async updatePointAsset(id, { name, type, condition, notes }) {
+    const { error } = await supabase
+      .from('point_assets')
+      .update({ name, type: type || null, condition: condition || null, notes: notes || null })
+      .eq('id', id)
+    if (error) throw error
+  },
+
+  // ---------------------------------------------------------------
+  // Deletes
+  // ---------------------------------------------------------------
+  async deleteArea(id) {
+    const { error } = await supabase.from('areas').delete().eq('id', id)
+    if (error) throw error
+  },
+
+  async deleteProperty(id) {
+    const { error } = await supabase.from('properties').delete().eq('id', id)
+    if (error) throw error
+  },
+
+  async deletePointAsset(id) {
+    const { error } = await supabase.from('point_assets').delete().eq('id', id)
+    if (error) throw error
   },
 }

@@ -2,20 +2,28 @@ import { useState } from 'react'
 import Map from './components/Map'
 import Toolbar from './components/Toolbar'
 import DrawAreaModal from './components/DrawAreaModal'
+import DrawPointModal from './components/DrawPointModal'
+import FeaturePanel from './components/FeaturePanel'
 import { api } from './api'
+import { POINT_DRAW_MODES, pointTypeFromMode } from './constants/pointTypes'
+
+const AREA_DRAW_MODES = new Set(['draw_property', 'draw_farm', 'draw_camp'])
 
 export default function App() {
-  const [mode, setMode] = useState('view')
-  const [reloadKey, setReloadKey] = useState(0)
+  const [mode, setMode]                   = useState('view')
+  const [reloadKey, setReloadKey]         = useState(0)
   const [pendingGeometry, setPendingGeometry] = useState(null)
-  const [saving, setSaving] = useState(false)
+  const [saving, setSaving]               = useState(false)
+  const [loadedData, setLoadedData]       = useState({ properties: [], farms: [], camps: [] })
+  const [selectedFeature, setSelectedFeature] = useState(null) // { featureType, data }
 
-  // Spatial data loaded from map — used to populate modal dropdowns
-  const [loadedData, setLoadedData] = useState({ properties: [], farms: [], camps: [] })
+  const reload = () => setReloadKey((k) => k + 1)
 
   const handleModeChange = (newMode) => {
     setMode(newMode)
     if (newMode === 'view') setPendingGeometry(null)
+    // Entering a draw mode clears the selection panel
+    if (newMode !== 'view') setSelectedFeature(null)
   }
 
   const handleDrawComplete = (geometry) => {
@@ -26,48 +34,59 @@ export default function App() {
     setLoadedData(data)
   }
 
-  const handleSave = async ({ name, owner, parentId }) => {
+  const handleFeatureClick = (feature) => {
+    // Don't open panel while in a draw mode
+    if (mode !== 'view') return
+    setSelectedFeature(feature)
+  }
+
+  // ---- Area save (property / farm / camp) ----
+  const handleSaveArea = async ({ name, owner, parentId }) => {
     if (!pendingGeometry) return
     setSaving(true)
     try {
       if (mode === 'draw_property') {
         await api.createProperty({ name, owner, boundary: pendingGeometry })
-
       } else if (mode === 'draw_farm') {
-        // Farms belong to the first property (single-property system for now)
         const propertyId = loadedData.properties[0]?.id
-        if (!propertyId) throw new Error('No property found. Draw a property boundary first.')
-        await api.createArea({
-          propertyId,
-          level: 'farm',
-          name,
-          boundary: pendingGeometry,
-        })
-
+        if (!propertyId) throw new Error('No property found — draw a property boundary first.')
+        await api.createArea({ propertyId, level: 'farm', name, boundary: pendingGeometry })
       } else if (mode === 'draw_camp') {
-        // parentId is the selected farm; derive propertyId from it
         const parentFarm = loadedData.farms.find((f) => f.id === parentId)
         const propertyId = parentFarm?.property_id ?? loadedData.properties[0]?.id
-        if (!propertyId) throw new Error('No property found. Draw a property boundary first.')
-        await api.createArea({
-          propertyId,
-          parentId: parentId || null,
-          level: 'camp',
-          name,
-          boundary: pendingGeometry,
-        })
+        if (!propertyId) throw new Error('No property found — draw a property boundary first.')
+        await api.createArea({ propertyId, parentId: parentId || null, level: 'camp', name, boundary: pendingGeometry })
       }
-
       setPendingGeometry(null)
       setMode('view')
-      setReloadKey((k) => k + 1)
+      reload()
     } catch (err) {
-      console.error('Save failed:', err)
       alert('Save failed: ' + err.message)
     } finally {
       setSaving(false)
     }
   }
+
+  // ---- Point asset save ----
+  const handleSavePoint = async ({ name, type, condition, notes }) => {
+    if (!pendingGeometry) return
+    setSaving(true)
+    try {
+      const propertyId = loadedData.properties[0]?.id
+      if (!propertyId) throw new Error('No property found — draw a property boundary first.')
+      await api.createPointAsset({ propertyId, name, type, condition, notes, geom: pendingGeometry })
+      setPendingGeometry(null)
+      setMode('view')
+      reload()
+    } catch (err) {
+      alert('Save failed: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const isAreaDraw  = AREA_DRAW_MODES.has(mode)
+  const isPointDraw = POINT_DRAW_MODES.has(mode)
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -76,19 +95,40 @@ export default function App() {
         reloadKey={reloadKey}
         onDrawComplete={handleDrawComplete}
         onDataLoaded={handleDataLoaded}
+        onFeatureClick={handleFeatureClick}
       />
+
       <Toolbar mode={mode} onModeChange={handleModeChange} />
-      {pendingGeometry && (
+
+      {/* Area draw modal */}
+      {pendingGeometry && isAreaDraw && (
         <DrawAreaModal
           drawMode={mode}
           properties={loadedData.properties}
           farms={loadedData.farms}
           saving={saving}
-          onSave={handleSave}
-          onCancel={() => {
-            setPendingGeometry(null)
-            setMode('view')
-          }}
+          onSave={handleSaveArea}
+          onCancel={() => { setPendingGeometry(null); setMode('view') }}
+        />
+      )}
+
+      {/* Point asset draw modal */}
+      {pendingGeometry && isPointDraw && (
+        <DrawPointModal
+          drawMode={mode}
+          saving={saving}
+          onSave={handleSavePoint}
+          onCancel={() => { setPendingGeometry(null); setMode('view') }}
+        />
+      )}
+
+      {/* Feature detail / edit panel */}
+      {selectedFeature && !pendingGeometry && (
+        <FeaturePanel
+          feature={selectedFeature}
+          onClose={() => setSelectedFeature(null)}
+          onSaved={() => { reload(); setSelectedFeature(null) }}
+          onDeleted={() => { reload(); setSelectedFeature(null) }}
         />
       )}
     </div>

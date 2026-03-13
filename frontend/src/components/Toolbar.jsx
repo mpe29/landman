@@ -1,38 +1,64 @@
-const MODES = [
-  { id: 'view',          label: 'View',        icon: '👁',  color: null },
-  { id: 'draw_property', label: 'Property',    icon: '⬡',  color: '#4ade80' },
-  { id: 'draw_farm',     label: 'Farm',        icon: '◼',  color: '#fbbf24' },
-  { id: 'draw_camp',     label: 'Camp',        icon: '◻',  color: '#60a5fa' },
+import { POINT_TYPES } from '../constants/pointTypes'
+
+const AREA_MODES = [
+  { id: 'draw_property', label: 'Property', color: '#4ade80' },
+  { id: 'draw_farm',     label: 'Farm',     color: '#fbbf24' },
+  { id: 'draw_camp',     label: 'Camp',     color: '#60a5fa' },
 ]
 
 export default function Toolbar({ mode, onModeChange }) {
+  const isDrawing = mode !== 'view'
+
+  const toggle = (modeId) => onModeChange(mode === modeId ? 'view' : modeId)
+
   return (
     <div style={styles.toolbar}>
-      <div style={styles.logo}>LANDMAN</div>
+      {/* Logo */}
+      <span style={styles.logo}>LANDMAN</span>
       <div style={styles.divider} />
-      <span style={styles.addLabel}>ADD</span>
-      <div style={styles.buttons}>
-        {MODES.filter((m) => m.id !== 'view').map((m) => (
-          <button
-            key={m.id}
-            onClick={() => onModeChange(mode === m.id ? 'view' : m.id)}
-            style={{
-              ...styles.btn,
-              ...(mode === m.id
-                ? { ...styles.btnActive, borderColor: m.color, color: m.color, background: `${m.color}18` }
-                : {}),
-            }}
-            title={m.label}
-          >
-            <span style={{ ...styles.dot, background: m.color }} />
-            {m.label}
-          </button>
-        ))}
-      </div>
-      {mode !== 'view' && (
-        <button style={styles.cancelBtn} onClick={() => onModeChange('view')} title="Cancel">
-          ✕
+
+      {/* Area section */}
+      <span style={styles.groupLabel}>AREAS</span>
+      {AREA_MODES.map((m) => (
+        <button
+          key={m.id}
+          onClick={() => toggle(m.id)}
+          style={mode === m.id
+            ? { ...styles.btn, borderColor: m.color, color: m.color, background: `${m.color}18` }
+            : styles.btn}
+          title={`Draw ${m.label}`}
+        >
+          <span style={{ ...styles.dot, background: m.color }} />
+          {m.label}
         </button>
+      ))}
+
+      <div style={styles.divider} />
+
+      {/* Point assets section */}
+      <span style={styles.groupLabel}>POINTS</span>
+      {POINT_TYPES.slice(0, 4).map((pt) => (
+        <button
+          key={pt.drawMode}
+          onClick={() => toggle(pt.drawMode)}
+          style={mode === pt.drawMode
+            ? { ...styles.btn, ...styles.iconBtn, borderColor: pt.color, color: pt.color, background: `${pt.color}18` }
+            : { ...styles.btn, ...styles.iconBtn }}
+          title={pt.label}
+        >
+          <span style={styles.ptIcon}>{pt.icon}</span>
+          <span>{pt.label}</span>
+        </button>
+      ))}
+
+      {/* Cancel button when drawing */}
+      {isDrawing && (
+        <>
+          <div style={styles.divider} />
+          <button style={styles.cancelBtn} onClick={() => onModeChange('view')} title="Cancel draw">
+            ✕ Cancel
+          </button>
+        </>
       )}
     </div>
   )
@@ -46,64 +72,73 @@ const styles = {
     zIndex: 10,
     display: 'flex',
     alignItems: 'center',
-    gap: 10,
-    background: 'rgba(15, 20, 25, 0.90)',
+    flexWrap: 'wrap',
+    gap: 6,
+    background: 'rgba(15, 20, 25, 0.92)',
     backdropFilter: 'blur(10px)',
     borderRadius: 10,
     padding: '8px 14px',
     boxShadow: '0 2px 16px rgba(0,0,0,0.5)',
     border: '1px solid rgba(255,255,255,0.08)',
+    maxWidth: 'calc(100vw - 120px)',
   },
   logo: {
     color: '#4ade80',
     fontWeight: 800,
     fontSize: 12,
     letterSpacing: '0.14em',
+    flexShrink: 0,
   },
   divider: {
     width: 1,
     height: 18,
     background: 'rgba(255,255,255,0.1)',
+    flexShrink: 0,
   },
-  addLabel: {
-    color: 'rgba(255,255,255,0.3)',
+  groupLabel: {
+    color: 'rgba(255,255,255,0.28)',
     fontSize: 10,
-    fontWeight: 600,
+    fontWeight: 700,
     letterSpacing: '0.1em',
-  },
-  buttons: {
-    display: 'flex',
-    gap: 5,
+    flexShrink: 0,
   },
   btn: {
     display: 'flex',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
     background: 'transparent',
     border: '1px solid rgba(255,255,255,0.12)',
     borderRadius: 6,
     color: 'rgba(255,255,255,0.6)',
     fontSize: 12,
     fontWeight: 500,
-    padding: '5px 10px',
+    padding: '5px 9px',
     cursor: 'pointer',
     transition: 'all 0.15s',
+    flexShrink: 0,
   },
-  btnActive: {},
+  iconBtn: {
+    padding: '5px 9px',
+  },
   dot: {
-    width: 8,
-    height: 8,
+    width: 7,
+    height: 7,
     borderRadius: '50%',
     flexShrink: 0,
   },
+  ptIcon: {
+    fontSize: 13,
+    lineHeight: 1,
+  },
   cancelBtn: {
     background: 'transparent',
-    border: '1px solid rgba(255,100,100,0.3)',
+    border: '1px solid rgba(255,100,100,0.35)',
     borderRadius: 6,
-    color: 'rgba(255,100,100,0.7)',
+    color: 'rgba(255,130,130,0.8)',
     fontSize: 12,
-    padding: '5px 9px',
+    fontWeight: 500,
+    padding: '5px 10px',
     cursor: 'pointer',
-    marginLeft: 2,
+    flexShrink: 0,
   },
 }
