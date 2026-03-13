@@ -104,18 +104,17 @@ export const LAYERS = [
   },
 
   // ----------------------------------------------------------------
-  // Field data (future)
+  // Field data
   // ----------------------------------------------------------------
   {
     id:             'observations',
     label:          'Observations',
     group:          'field_data',
     type:           'point',
-    color:          '#f43f5e',
+    color:          '#e11d48',
     circleRadius:   6,
     featureType:    'observation',
     defaultVisible: true,
-    comingSoon:     true,
   },
 ]
 

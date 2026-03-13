@@ -4,19 +4,19 @@ const CONFIG = {
   draw_property: {
     title: 'Save Property',
     hint: 'Name this top-level land holding. Everything else lives inside it.',
-    color: '#4ade80',
+    color: '#16a34a',
     showParent: false,
   },
   draw_farm: {
     title: 'Save Farm',
     hint: 'Name this farm within your property.',
-    color: '#fbbf24',
-    showParent: false, // property auto-selected (only one for now)
+    color: '#d97706',
+    showParent: false,
   },
   draw_camp: {
     title: 'Save Camp / Paddock',
     hint: 'Name this camp and select which farm it belongs to.',
-    color: '#60a5fa',
+    color: '#2563eb',
     showParent: true,
   },
 }
@@ -40,7 +40,7 @@ export default function DrawAreaModal({ drawMode, properties, farms, onSave, onC
   return (
     <div style={styles.overlay}>
       <div style={{ ...styles.modal, borderTopColor: cfg.color }}>
-        <div style={{ ...styles.badge, color: cfg.color, borderColor: `${cfg.color}40` }}>
+        <div style={{ ...styles.badge, color: cfg.color, borderColor: `${cfg.color}30` }}>
           {drawMode === 'draw_property' ? 'PROPERTY' : drawMode === 'draw_farm' ? 'FARM' : 'CAMP'}
         </div>
         <h3 style={styles.title}>{cfg.title}</h3>
@@ -124,17 +124,17 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'rgba(0,0,0,0.55)',
+    background: 'rgba(0,0,0,0.35)',
     backdropFilter: 'blur(4px)',
   },
   modal: {
-    background: '#0f1419',
-    border: '1px solid rgba(255,255,255,0.1)',
+    background: '#fff',
+    border: '1px solid rgba(0,0,0,0.08)',
     borderTop: '3px solid',
     borderRadius: 12,
     padding: 28,
     width: 380,
-    boxShadow: '0 8px 40px rgba(0,0,0,0.7)',
+    boxShadow: '0 8px 40px rgba(0,0,0,0.15)',
   },
   badge: {
     display: 'inline-block',
@@ -147,13 +147,13 @@ const styles = {
     marginBottom: 10,
   },
   title: {
-    color: '#fff',
+    color: '#111827',
     fontSize: 17,
     fontWeight: 600,
     marginBottom: 6,
   },
   hint: {
-    color: 'rgba(255,255,255,0.45)',
+    color: 'rgba(0,0,0,0.45)',
     fontSize: 13,
     marginBottom: 20,
     lineHeight: 1.5,
@@ -167,26 +167,27 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: 6,
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(0,0,0,0.5)',
     fontSize: 11,
     fontWeight: 600,
     textTransform: 'uppercase',
     letterSpacing: '0.07em',
   },
   input: {
-    background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(0,0,0,0.03)',
+    border: '1px solid rgba(0,0,0,0.1)',
     borderRadius: 6,
-    color: '#fff',
+    color: '#111827',
     fontSize: 14,
     padding: '8px 12px',
     outline: 'none',
+    fontFamily: 'inherit',
   },
   warn: {
-    color: '#fbbf24',
+    color: '#92400e',
     fontSize: 13,
-    background: 'rgba(251,191,36,0.08)',
-    border: '1px solid rgba(251,191,36,0.2)',
+    background: 'rgba(251,191,36,0.1)',
+    border: '1px solid rgba(251,191,36,0.3)',
     borderRadius: 6,
     padding: '8px 12px',
   },
@@ -198,21 +199,23 @@ const styles = {
   cancelBtn: {
     flex: 1,
     background: 'transparent',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: '1px solid rgba(0,0,0,0.1)',
     borderRadius: 6,
-    color: 'rgba(255,255,255,0.5)',
+    color: 'rgba(0,0,0,0.5)',
     fontSize: 13,
     padding: '9px 0',
     cursor: 'pointer',
+    fontFamily: 'inherit',
   },
   saveBtn: {
     flex: 2,
     border: 'none',
     borderRadius: 6,
-    color: '#0f1419',
+    color: '#fff',
     fontSize: 13,
     fontWeight: 700,
     padding: '9px 0',
     cursor: 'pointer',
+    fontFamily: 'inherit',
   },
 }

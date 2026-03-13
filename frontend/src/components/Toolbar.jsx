@@ -1,12 +1,12 @@
 import { POINT_TYPES } from '../constants/pointTypes'
 
 const AREA_MODES = [
-  { id: 'draw_property', label: 'Property', color: '#4ade80' },
-  { id: 'draw_farm',     label: 'Farm',     color: '#fbbf24' },
-  { id: 'draw_camp',     label: 'Camp',     color: '#60a5fa' },
+  { id: 'draw_property', label: 'Property', color: '#16a34a' },
+  { id: 'draw_farm',     label: 'Farm',     color: '#d97706' },
+  { id: 'draw_camp',     label: 'Camp',     color: '#2563eb' },
 ]
 
-export default function Toolbar({ mode, onModeChange }) {
+export default function Toolbar({ mode, onModeChange, onObservationClick }) {
   const isDrawing = mode !== 'view'
 
   const toggle = (modeId) => onModeChange(mode === modeId ? 'view' : modeId)
@@ -24,7 +24,7 @@ export default function Toolbar({ mode, onModeChange }) {
           key={m.id}
           onClick={() => toggle(m.id)}
           style={mode === m.id
-            ? { ...styles.btn, borderColor: m.color, color: m.color, background: `${m.color}18` }
+            ? { ...styles.btn, borderColor: m.color, color: m.color, background: `${m.color}14` }
             : styles.btn}
           title={`Draw ${m.label}`}
         >
@@ -42,7 +42,7 @@ export default function Toolbar({ mode, onModeChange }) {
           key={pt.drawMode}
           onClick={() => toggle(pt.drawMode)}
           style={mode === pt.drawMode
-            ? { ...styles.btn, ...styles.iconBtn, borderColor: pt.color, color: pt.color, background: `${pt.color}18` }
+            ? { ...styles.btn, ...styles.iconBtn, borderColor: pt.color, color: pt.color, background: `${pt.color}14` }
             : { ...styles.btn, ...styles.iconBtn }}
           title={pt.label}
         >
@@ -50,6 +50,19 @@ export default function Toolbar({ mode, onModeChange }) {
           <span>{pt.label}</span>
         </button>
       ))}
+
+      <div style={styles.divider} />
+
+      {/* Observations section */}
+      <span style={styles.groupLabel}>OBSERVE</span>
+      <button
+        style={{ ...styles.btn, ...styles.iconBtn }}
+        onClick={onObservationClick}
+        title="Add photo observation"
+      >
+        <span style={styles.ptIcon}>📷</span>
+        <span>Add Photo</span>
+      </button>
 
       {/* Cancel button when drawing */}
       {isDrawing && (
@@ -74,29 +87,30 @@ const styles = {
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 6,
-    background: 'rgba(15, 20, 25, 0.92)',
+    background: 'rgba(255, 255, 255, 0.97)',
     backdropFilter: 'blur(10px)',
     borderRadius: 10,
     padding: '8px 14px',
-    boxShadow: '0 2px 16px rgba(0,0,0,0.5)',
-    border: '1px solid rgba(255,255,255,0.08)',
+    boxShadow: '0 2px 20px rgba(0,0,0,0.1)',
+    border: '1px solid rgba(0,0,0,0.08)',
     maxWidth: 'calc(100vw - 120px)',
   },
   logo: {
-    color: '#4ade80',
+    color: '#16a34a',
+    fontFamily: "'Exo 2', sans-serif",
     fontWeight: 800,
-    fontSize: 12,
+    fontSize: 13,
     letterSpacing: '0.14em',
     flexShrink: 0,
   },
   divider: {
     width: 1,
     height: 18,
-    background: 'rgba(255,255,255,0.1)',
+    background: 'rgba(0,0,0,0.08)',
     flexShrink: 0,
   },
   groupLabel: {
-    color: 'rgba(255,255,255,0.28)',
+    color: 'rgba(0,0,0,0.3)',
     fontSize: 10,
     fontWeight: 700,
     letterSpacing: '0.1em',
@@ -107,9 +121,9 @@ const styles = {
     alignItems: 'center',
     gap: 5,
     background: 'transparent',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: '1px solid rgba(0,0,0,0.1)',
     borderRadius: 6,
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(0,0,0,0.6)',
     fontSize: 12,
     fontWeight: 500,
     padding: '5px 9px',
@@ -132,9 +146,9 @@ const styles = {
   },
   cancelBtn: {
     background: 'transparent',
-    border: '1px solid rgba(255,100,100,0.35)',
+    border: '1px solid rgba(220,38,38,0.3)',
     borderRadius: 6,
-    color: 'rgba(255,130,130,0.8)',
+    color: 'rgba(220,38,38,0.75)',
     fontSize: 12,
     fontWeight: 500,
     padding: '5px 10px',

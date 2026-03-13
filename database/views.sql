@@ -80,6 +80,7 @@ SELECT
     observed_at,
     type,
     notes,
+    image_url,
     tags,
     created_at,
     CASE WHEN geom IS NOT NULL

@@ -5,7 +5,6 @@ import { POINT_TYPES } from '../constants/pointTypes'
 export default function LayerControl({ visibility, onChange }) {
   const [collapsed, setCollapsed] = useState(false)
 
-  // Group active layers by their group id
   const grouped = LAYER_GROUPS.map((group) => ({
     ...group,
     layers: ACTIVE_LAYERS.filter((l) => l.group === group.id),
@@ -40,7 +39,6 @@ export default function LayerControl({ visibility, onChange }) {
 }
 
 function LayerRow({ layer, visible, onChange }) {
-  // For multi-color point layers, show a small swatch row
   const swatches = layer.color === 'multi' ? POINT_TYPES.slice(0, 5) : null
 
   return (
@@ -51,7 +49,7 @@ function LayerRow({ layer, visible, onChange }) {
             {swatches.map((pt) => (
               <span
                 key={pt.id}
-                style={{ ...styles.swatch, background: pt.color, opacity: visible ? 1 : 0.3 }}
+                style={{ ...styles.swatch, background: pt.color, opacity: visible ? 1 : 0.25 }}
                 title={pt.label}
               />
             ))}
@@ -59,18 +57,17 @@ function LayerRow({ layer, visible, onChange }) {
         ) : layer.type === 'polygon' ? (
           <span style={{
             ...styles.colorBlock,
-            background: visible ? layer.color + '30' : 'transparent',
-            borderColor: visible ? layer.color : 'rgba(255,255,255,0.15)',
+            background: visible ? layer.color + '28' : 'transparent',
+            borderColor: visible ? layer.color : 'rgba(0,0,0,0.12)',
           }} />
         ) : layer.type === 'line' ? (
-          <span style={{ ...styles.colorLine, borderColor: visible ? layer.color : 'rgba(255,255,255,0.15)' }} />
+          <span style={{ ...styles.colorLine, borderColor: visible ? layer.color : 'rgba(0,0,0,0.12)' }} />
         ) : (
-          <span style={{ ...styles.colorDot, background: visible ? layer.color : 'rgba(255,255,255,0.15)' }} />
+          <span style={{ ...styles.colorDot, background: visible ? layer.color : 'rgba(0,0,0,0.12)' }} />
         )}
-        <span style={{ ...styles.layerLabel, opacity: visible ? 1 : 0.4 }}>{layer.label}</span>
+        <span style={{ ...styles.layerLabel, opacity: visible ? 1 : 0.35 }}>{layer.label}</span>
       </div>
-      {/* Toggle */}
-      <div style={{ ...styles.toggle, background: visible ? '#4ade80' : 'rgba(255,255,255,0.12)' }}>
+      <div style={{ ...styles.toggle, background: visible ? '#16a34a' : 'rgba(0,0,0,0.12)' }}>
         <div style={{ ...styles.toggleThumb, transform: visible ? 'translateX(12px)' : 'translateX(1px)' }} />
       </div>
     </div>
@@ -83,11 +80,11 @@ const styles = {
     bottom: 32,
     left: 16,
     zIndex: 10,
-    background: 'rgba(15, 20, 25, 0.92)',
+    background: 'rgba(255, 255, 255, 0.97)',
     backdropFilter: 'blur(10px)',
-    border: '1px solid rgba(255,255,255,0.08)',
+    border: '1px solid rgba(0,0,0,0.08)',
     borderRadius: 10,
-    boxShadow: '0 2px 16px rgba(0,0,0,0.5)',
+    boxShadow: '0 2px 20px rgba(0,0,0,0.1)',
     minWidth: 200,
     overflow: 'hidden',
   },
@@ -102,25 +99,25 @@ const styles = {
     cursor: 'pointer',
   },
   title: {
-    color: 'rgba(255,255,255,0.4)',
+    color: 'rgba(0,0,0,0.35)',
     fontSize: 10,
     fontWeight: 700,
     letterSpacing: '0.12em',
   },
   chevron: {
-    color: 'rgba(255,255,255,0.3)',
+    color: 'rgba(0,0,0,0.3)',
     fontSize: 11,
   },
   body: {
     padding: '2px 0 8px',
-    borderTop: '1px solid rgba(255,255,255,0.06)',
+    borderTop: '1px solid rgba(0,0,0,0.06)',
   },
   group: {
     padding: '6px 0 2px',
   },
   groupLabel: {
     display: 'block',
-    color: 'rgba(255,255,255,0.22)',
+    color: 'rgba(0,0,0,0.28)',
     fontSize: 9,
     fontWeight: 700,
     letterSpacing: '0.1em',
@@ -173,7 +170,7 @@ const styles = {
     display: 'inline-block',
   },
   layerLabel: {
-    color: 'rgba(255,255,255,0.7)',
+    color: 'rgba(0,0,0,0.7)',
     fontSize: 12,
     whiteSpace: 'nowrap',
     overflow: 'hidden',
@@ -194,6 +191,7 @@ const styles = {
     height: 12,
     borderRadius: '50%',
     background: '#fff',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
     transition: 'transform 0.2s',
   },
 }

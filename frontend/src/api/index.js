@@ -33,7 +33,7 @@ export const api = {
     return data
   },
 
-  // propertyId optional — omit to load all point assets (used by map)
+  // propertyId optional — omit to load all (used by map)
   async getPointAssets(propertyId) {
     let q = supabase.from('point_assets_geo').select('*')
     if (propertyId) q = q.eq('property_id', propertyId)
@@ -43,10 +43,18 @@ export const api = {
   },
 
   async getObservations(propertyId) {
-    const { data, error } = await supabase
-      .from('observations_geo')
-      .select('*')
-      .eq('property_id', propertyId)
+    let q = supabase.from('observations_geo').select('*').order('observed_at', { ascending: false })
+    if (propertyId) q = q.eq('property_id', propertyId)
+    const { data, error } = await q
+    if (error) throw error
+    return data
+  },
+
+  // Operations = events/campaigns (e.g. "North Fence Build 2025")
+  async getOperations(propertyId) {
+    let q = supabase.from('operations').select('*').order('started_at', { ascending: false })
+    if (propertyId) q = q.eq('property_id', propertyId)
+    const { data, error } = await q
     if (error) throw error
     return data
   },
@@ -56,8 +64,8 @@ export const api = {
   // ---------------------------------------------------------------
   async createProperty({ name, owner, boundary }) {
     const { data, error } = await supabase.rpc('create_property', {
-      p_name: name,
-      p_owner: owner || null,
+      p_name:     name,
+      p_owner:    owner || null,
       p_boundary: boundary || null,
     })
     if (error) throw error
@@ -81,11 +89,11 @@ export const api = {
   async createLinearAsset({ propertyId, name, type, condition, notes, geom }) {
     const { data, error } = await supabase.rpc('create_linear_asset', {
       p_property_id: propertyId,
-      p_name: name,
-      p_type: type || null,
-      p_condition: condition || null,
-      p_notes: notes || null,
-      p_geom: geom || null,
+      p_name:        name,
+      p_type:        type || null,
+      p_condition:   condition || null,
+      p_notes:       notes || null,
+      p_geom:        geom || null,
     })
     if (error) throw error
     return data
@@ -94,27 +102,61 @@ export const api = {
   async createPointAsset({ propertyId, name, type, condition, notes, geom }) {
     const { data, error } = await supabase.rpc('create_point_asset', {
       p_property_id: propertyId,
-      p_name: name,
-      p_type: type || null,
-      p_condition: condition || null,
-      p_notes: notes || null,
-      p_geom: geom || null,
+      p_name:        name,
+      p_type:        type || null,
+      p_condition:   condition || null,
+      p_notes:       notes || null,
+      p_geom:        geom || null,
     })
     if (error) throw error
     return data
   },
 
-  async createObservation(observation) {
+  async createObservation({ propertyId, operationId, geom, observedAt, type, notes, imageUrl }) {
+    const { data, error } = await supabase.rpc('create_observation', {
+      p_property_id:  propertyId,
+      p_operation_id: operationId || null,
+      p_geom:         geom || null,
+      p_observed_at:  observedAt || null,
+      p_type:         type || null,
+      p_notes:        notes || null,
+      p_image_url:    imageUrl || null,
+    })
+    if (error) throw error
+    return data
+  },
+
+  async createOperation({ propertyId, name, type, startedAt, notes }) {
     const { data, error } = await supabase
-      .from('observations')
-      .insert(observation)
+      .from('operations')
+      .insert({
+        property_id: propertyId,
+        name,
+        type:       type || null,
+        started_at: startedAt || null,
+        notes:      notes || null,
+      })
       .select()
     if (error) throw error
     return data[0]
   },
 
   // ---------------------------------------------------------------
-  // Updates — no geometry, so direct table access is fine
+  // Storage — observation images
+  // ---------------------------------------------------------------
+  async uploadObservationImage(file) {
+    const ext  = file.name.split('.').pop().toLowerCase()
+    const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const { error } = await supabase.storage
+      .from('observation-images')
+      .upload(path, file, { upsert: false })
+    if (error) throw error
+    const { data } = supabase.storage.from('observation-images').getPublicUrl(path)
+    return data.publicUrl
+  },
+
+  // ---------------------------------------------------------------
+  // Updates — no geometry, direct table access
   // ---------------------------------------------------------------
   async updateArea(id, { name, type, notes }) {
     const { error } = await supabase
@@ -140,6 +182,14 @@ export const api = {
     if (error) throw error
   },
 
+  async updateObservation(id, { notes }) {
+    const { error } = await supabase
+      .from('observations')
+      .update({ notes: notes || null })
+      .eq('id', id)
+    if (error) throw error
+  },
+
   // ---------------------------------------------------------------
   // Deletes
   // ---------------------------------------------------------------
@@ -155,6 +205,11 @@ export const api = {
 
   async deletePointAsset(id) {
     const { error } = await supabase.from('point_assets').delete().eq('id', id)
+    if (error) throw error
+  },
+
+  async deleteObservation(id) {
+    const { error } = await supabase.from('observations').delete().eq('id', id)
     if (error) throw error
   },
 }

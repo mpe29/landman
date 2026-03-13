@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Map from './components/Map'
 import Toolbar from './components/Toolbar'
 import LayerControl from './components/LayerControl'
 import DrawAreaModal from './components/DrawAreaModal'
 import DrawPointModal from './components/DrawPointModal'
+import ObservationModal from './components/ObservationModal'
 import FeaturePanel from './components/FeaturePanel'
 import { api } from './api'
-import { POINT_DRAW_MODES, pointTypeFromMode } from './constants/pointTypes'
+import { POINT_DRAW_MODES } from './constants/pointTypes'
 import { DEFAULT_VISIBILITY } from './constants/layers'
 
 const AREA_DRAW_MODES = new Set(['draw_property', 'draw_farm', 'draw_camp'])
@@ -17,18 +18,26 @@ export default function App() {
   const [pendingGeometry, setPendingGeometry] = useState(null)
   const [saving, setSaving]               = useState(false)
   const [loadedData, setLoadedData]       = useState({ properties: [], farms: [], camps: [] })
-  const [selectedFeature, setSelectedFeature] = useState(null) // { featureType, data }
+  const [selectedFeature, setSelectedFeature] = useState(null)
   const [layerVisibility, setLayerVisibility] = useState(DEFAULT_VISIBILITY)
+  const [showObsModal, setShowObsModal]   = useState(false)
+  const [operations, setOperations]       = useState([])
 
   const handleLayerToggle = (id, visible) =>
     setLayerVisibility((prev) => ({ ...prev, [id]: visible }))
 
   const reload = () => setReloadKey((k) => k + 1)
 
+  // Load operations whenever we have a property
+  useEffect(() => {
+    const propertyId = loadedData.properties[0]?.id
+    if (!propertyId) return
+    api.getOperations(propertyId).then(setOperations).catch(console.error)
+  }, [loadedData.properties])
+
   const handleModeChange = (newMode) => {
     setMode(newMode)
     if (newMode === 'view') setPendingGeometry(null)
-    // Entering a draw mode clears the selection panel
     if (newMode !== 'view') setSelectedFeature(null)
   }
 
@@ -41,7 +50,6 @@ export default function App() {
   }
 
   const handleFeatureClick = (feature) => {
-    // Don't open panel while in a draw mode
     if (mode !== 'view') return
     setSelectedFeature(feature)
   }
@@ -105,7 +113,11 @@ export default function App() {
         onFeatureClick={handleFeatureClick}
       />
 
-      <Toolbar mode={mode} onModeChange={handleModeChange} />
+      <Toolbar
+        mode={mode}
+        onModeChange={handleModeChange}
+        onObservationClick={() => setShowObsModal(true)}
+      />
 
       <LayerControl visibility={layerVisibility} onChange={handleLayerToggle} />
 
@@ -131,8 +143,18 @@ export default function App() {
         />
       )}
 
+      {/* Observation modal */}
+      {showObsModal && (
+        <ObservationModal
+          propertyId={loadedData.properties[0]?.id}
+          operations={operations}
+          onSaved={() => { setShowObsModal(false); reload() }}
+          onCancel={() => setShowObsModal(false)}
+        />
+      )}
+
       {/* Feature detail / edit panel */}
-      {selectedFeature && !pendingGeometry && (
+      {selectedFeature && !pendingGeometry && !showObsModal && (
         <FeaturePanel
           feature={selectedFeature}
           onClose={() => setSelectedFeature(null)}

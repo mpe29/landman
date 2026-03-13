@@ -18,16 +18,18 @@ const POINT_COLOR_EXPR = [
 
 // Fetch all spatial data and partition into layer buckets
 async function loadAllData() {
-  const [properties, areas, pointAssets] = await Promise.all([
+  const [properties, areas, pointAssets, observations] = await Promise.all([
     api.getProperties(),
     api.getAreas(),
     api.getPointAssets(),
+    api.getObservations(),
   ])
   return {
     properties,
     farms:        areas.filter((a) => a.level === 'farm'),
     camps:        areas.filter((a) => a.level === 'camp'),
     point_assets: pointAssets,
+    observations,
   }
 }
 
@@ -180,6 +182,7 @@ export default function Map({ mode, reloadKey, layerVisibility, onDrawComplete, 
       map.current.getSource('farms')?.setData(toFC(buckets.farms))
       map.current.getSource('camps')?.setData(toFC(buckets.camps))
       map.current.getSource('point_assets')?.setData(toFC(buckets.point_assets, 'geom'))
+      map.current.getSource('observations')?.setData(toFC(buckets.observations, 'geom'))
 
       // Notify App with raw data for dropdowns
       onDataLoaded?.({
