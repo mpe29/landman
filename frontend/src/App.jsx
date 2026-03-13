@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import Map from './components/Map'
+import MainMenu from './components/MainMenu'
 import Toolbar from './components/Toolbar'
 import LayerControl from './components/LayerControl'
 import DrawAreaModal from './components/DrawAreaModal'
@@ -32,6 +33,10 @@ export default function App() {
   const [selectedFeature, setSelectedFeature] = useState(null)
   const [showObsModal, setShowObsModal]   = useState(false)
   const [operations, setOperations]       = useState([])
+
+  // ── Which bottom-left panel is open (only one at a time) ───────
+  const [openPanel, setOpenPanel] = useState(null)
+  const handlePanelOpen = (id) => setOpenPanel((prev) => prev === id ? null : id)
 
   // ── Persisted layer visibility ─────────────────────────────────
   const [layerVisibility, setLayerVisibility] = useState(() =>
@@ -68,7 +73,6 @@ export default function App() {
     saveLS('landman_obs_filter', next)
   }
 
-  // Filtered count (for the panel header badge)
   const filteredObsCount = useMemo(
     () => filterObservations(loadedData.observations, obsFilter).length,
     [loadedData.observations, obsFilter]
@@ -108,8 +112,7 @@ export default function App() {
   }
 
   const handleDrawComplete = (geometry) => setPendingGeometry(geometry)
-
-  const handleDataLoaded = (data) => setLoadedData(data)
+  const handleDataLoaded   = (data) => setLoadedData(data)
 
   const handleFeatureClick = (feature) => {
     if (mode !== 'view') return
@@ -181,25 +184,37 @@ export default function App() {
         heatmap={heatmap}
       />
 
-      <Toolbar
-        mode={mode}
-        onModeChange={handleModeChange}
-        onObservationClick={() => setShowObsModal(true)}
-      />
+      {/* ── Top-left: app menu ── */}
+      <MainMenu />
 
-      <LayerControl visibility={layerVisibility} onChange={handleLayerToggle} />
-
-      <ObservationFilterPanel
-        observations={loadedData.observations}
-        tagTypes={tagTypes}
-        filter={obsFilter}
-        onChange={handleObsFilterChange}
-        onAddTagType={handleAddTagType}
-        filteredCount={filteredObsCount}
-        heatmap={heatmap}
-        onHeatmapToggle={() => setHeatmap((h) => !h)}
-        forceCollapsed={!!selectedFeature}
-      />
+      {/* ── Bottom-left: stacked panels (only one open at a time) ── */}
+      <div style={stackStyle}>
+        <Toolbar
+          mode={mode}
+          onModeChange={handleModeChange}
+          isOpen={openPanel === 'create'}
+          onOpen={() => handlePanelOpen('create')}
+        />
+        <ObservationFilterPanel
+          observations={loadedData.observations}
+          tagTypes={tagTypes}
+          filter={obsFilter}
+          onChange={handleObsFilterChange}
+          onAddTagType={handleAddTagType}
+          filteredCount={filteredObsCount}
+          heatmap={heatmap}
+          onHeatmapToggle={() => setHeatmap((h) => !h)}
+          onObservationClick={() => setShowObsModal(true)}
+          isOpen={openPanel === 'observe'}
+          onOpen={() => handlePanelOpen('observe')}
+        />
+        <LayerControl
+          visibility={layerVisibility}
+          onChange={handleLayerToggle}
+          isOpen={openPanel === 'layers'}
+          onOpen={() => handlePanelOpen('layers')}
+        />
+      </div>
 
       {/* Area draw modal */}
       {pendingGeometry && isAreaDraw && (
@@ -248,4 +263,15 @@ export default function App() {
       )}
     </div>
   )
+}
+
+const stackStyle = {
+  position: 'absolute',
+  bottom: 32,
+  left: 16,
+  zIndex: 10,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  width: 240,
 }
