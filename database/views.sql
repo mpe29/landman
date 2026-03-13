@@ -1,12 +1,19 @@
 -- LANDMAN Database Views
 -- These views expose geometry as GeoJSON for the Supabase REST API,
 -- which returns PostGIS geometry as WKB hex by default.
+-- area_ha is a generated column on the underlying tables — included here
+-- so the frontend can display sizes without extra queries.
 
-CREATE OR REPLACE VIEW properties_geo AS
+-- Note: views with geometry columns must be DROP+CREATE (not CREATE OR REPLACE)
+-- when column lists change, because PostgreSQL tracks column positions.
+
+DROP VIEW IF EXISTS properties_geo;
+CREATE VIEW properties_geo AS
 SELECT
     id,
     name,
     owner,
+    area_ha,
     created_at,
     CASE WHEN boundary IS NOT NULL
         THEN ST_AsGeoJSON(boundary)::json
@@ -14,13 +21,17 @@ SELECT
     END AS boundary
 FROM properties;
 
-CREATE OR REPLACE VIEW areas_geo AS
+DROP VIEW IF EXISTS areas_geo;
+CREATE VIEW areas_geo AS
 SELECT
     id,
     property_id,
+    parent_id,
+    level,
     name,
     type,
     notes,
+    area_ha,
     created_at,
     CASE WHEN boundary IS NOT NULL
         THEN ST_AsGeoJSON(boundary)::json
@@ -28,7 +39,8 @@ SELECT
     END AS boundary
 FROM areas;
 
-CREATE OR REPLACE VIEW linear_assets_geo AS
+DROP VIEW IF EXISTS linear_assets_geo;
+CREATE VIEW linear_assets_geo AS
 SELECT
     id,
     property_id,
@@ -43,7 +55,8 @@ SELECT
     END AS geom
 FROM linear_assets;
 
-CREATE OR REPLACE VIEW point_assets_geo AS
+DROP VIEW IF EXISTS point_assets_geo;
+CREATE VIEW point_assets_geo AS
 SELECT
     id,
     property_id,
@@ -58,7 +71,8 @@ SELECT
     END AS geom
 FROM point_assets;
 
-CREATE OR REPLACE VIEW observations_geo AS
+DROP VIEW IF EXISTS observations_geo;
+CREATE VIEW observations_geo AS
 SELECT
     id,
     property_id,

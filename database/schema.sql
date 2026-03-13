@@ -19,6 +19,9 @@ CREATE TABLE properties (
     name        TEXT NOT NULL,
     owner       TEXT,
     boundary    GEOMETRY(POLYGON, 4326),
+    area_ha     NUMERIC GENERATED ALWAYS AS (
+                    ROUND((ST_Area(boundary::geography) / 10000)::numeric, 2)
+                ) STORED,
     created_at  TIMESTAMP DEFAULT NOW()
 );
 
@@ -32,9 +35,14 @@ CREATE INDEX idx_properties_boundary ON properties USING GIST(boundary);
 CREATE TABLE areas (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    parent_id   UUID REFERENCES areas(id) ON DELETE SET NULL,
+    level       TEXT DEFAULT 'camp',  -- farm | camp | paddock
     name        TEXT NOT NULL,
-    type        TEXT NOT NULL,  -- paddock | grazing_block | habitat_zone | other
+    type        TEXT,                 -- grazing_block | game_camp | habitat_zone | other (optional subcategory)
     boundary    GEOMETRY(POLYGON, 4326),
+    area_ha     NUMERIC GENERATED ALWAYS AS (
+                    ROUND((ST_Area(boundary::geography) / 10000)::numeric, 2)
+                ) STORED,
     notes       TEXT,
     created_at  TIMESTAMP DEFAULT NOW()
 );
