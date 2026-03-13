@@ -6,6 +6,9 @@ const supabase = createClient(
 )
 
 export const api = {
+  // ---------------------------------------------------------------
+  // Reads — query the *_geo views which return GeoJSON geometry
+  // ---------------------------------------------------------------
   async getProperties() {
     const { data, error } = await supabase.from('properties_geo').select('*')
     if (error) throw error
@@ -44,6 +47,57 @@ export const api = {
       .from('observations_geo')
       .select('*')
       .eq('property_id', propertyId)
+    if (error) throw error
+    return data
+  },
+
+  // ---------------------------------------------------------------
+  // Writes — use RPC functions so PostGIS can parse GeoJSON geometry
+  // ---------------------------------------------------------------
+  async createProperty({ name, owner, boundary }) {
+    const { data, error } = await supabase.rpc('create_property', {
+      p_name: name,
+      p_owner: owner || null,
+      p_boundary: boundary || null,
+    })
+    if (error) throw error
+    return data
+  },
+
+  async createArea({ propertyId, name, type, notes, boundary }) {
+    const { data, error } = await supabase.rpc('create_area', {
+      p_property_id: propertyId,
+      p_name: name,
+      p_type: type || null,
+      p_notes: notes || null,
+      p_boundary: boundary || null,
+    })
+    if (error) throw error
+    return data
+  },
+
+  async createLinearAsset({ propertyId, name, type, condition, notes, geom }) {
+    const { data, error } = await supabase.rpc('create_linear_asset', {
+      p_property_id: propertyId,
+      p_name: name,
+      p_type: type || null,
+      p_condition: condition || null,
+      p_notes: notes || null,
+      p_geom: geom || null,
+    })
+    if (error) throw error
+    return data
+  },
+
+  async createPointAsset({ propertyId, name, type, condition, notes, geom }) {
+    const { data, error } = await supabase.rpc('create_point_asset', {
+      p_property_id: propertyId,
+      p_name: name,
+      p_type: type || null,
+      p_condition: condition || null,
+      p_notes: notes || null,
+      p_geom: geom || null,
+    })
     if (error) throw error
     return data
   },
