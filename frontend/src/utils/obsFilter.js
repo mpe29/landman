@@ -8,6 +8,12 @@ export const DEFAULT_OBS_FILTER = {
   tagMode: 'any',  // 'any' show obs matching ANY selected tag, 'all' requires ALL
 }
 
+function parseObservedDate(value) {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
 export function isFilterActive(filter) {
   if (!filter) return false
   return (
@@ -22,7 +28,7 @@ export function filterObservations(observations, filter) {
   const { years, months, tagIds, tagMode } = filter
 
   return observations.filter((obs) => {
-    const date = obs.observed_at ? new Date(obs.observed_at) : null
+    const date = parseObservedDate(obs.observed_at)
 
     if (years && years.length > 0) {
       if (!date || !years.includes(date.getFullYear())) return false
@@ -49,7 +55,8 @@ export function filterObservations(observations, filter) {
 export function getObservationYears(observations) {
   const years = new Set()
   observations.forEach((o) => {
-    if (o.observed_at) years.add(new Date(o.observed_at).getFullYear())
+    const date = parseObservedDate(o.observed_at)
+    if (date) years.add(date.getFullYear())
   })
   return [...years].sort((a, b) => b - a) // newest first
 }
