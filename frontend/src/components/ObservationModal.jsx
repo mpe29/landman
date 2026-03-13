@@ -30,7 +30,7 @@ export default function ObservationModal({ propertyId, operations, onSaved, onCa
     setPreview(URL.createObjectURL(f))
     setExifLoading(true)
     try {
-      const exif = await exifr.parse(f, { gps: true, tiff: true, pick: ['GPSLatitude', 'GPSLongitude', 'DateTimeOriginal', 'CreateDate', 'latitude', 'longitude'] })
+      const exif = await exifr.parse(f, { gps: true, tiff: true })
       setExifData({
         lat:       exif?.latitude   ?? null,
         lng:       exif?.longitude  ?? null,
