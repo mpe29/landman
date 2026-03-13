@@ -198,6 +198,7 @@ export default function App() {
         filteredCount={filteredObsCount}
         heatmap={heatmap}
         onHeatmapToggle={() => setHeatmap((h) => !h)}
+        forceCollapsed={!!selectedFeature}
       />
 
       {/* Area draw modal */}

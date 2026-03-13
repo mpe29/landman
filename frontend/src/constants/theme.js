@@ -48,4 +48,9 @@ export const T = {
   danger:       '#b91c1c',
   dangerBg:     'rgba(185,28,28,0.07)',
   dangerBorder: 'rgba(185,28,28,0.28)',
+
+  // Warning (amber — uses dryGrassYellow)
+  warn:       '#92400e',
+  warnBg:     C.dryGrassYellow + '14',
+  warnBorder: C.dryGrassYellow + '40',
 }

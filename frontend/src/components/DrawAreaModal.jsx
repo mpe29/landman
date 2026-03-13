@@ -185,10 +185,10 @@ const styles = {
     fontFamily: 'inherit',
   },
   warn: {
-    color: '#92400e',
+    color: T.warn,
     fontSize: 13,
-    background: '#D4B64614',
-    border: '1px solid #D4B64640',
+    background: T.warnBg,
+    border: `1px solid ${T.warnBorder}`,
     borderRadius: 6,
     padding: '8px 12px',
   },

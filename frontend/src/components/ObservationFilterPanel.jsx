@@ -28,6 +28,7 @@ export default function ObservationFilterPanel({
   filteredCount,
   heatmap,
   onHeatmapToggle,
+  forceCollapsed,  // true when FeaturePanel is open — prevent overlap
 }) {
   const [collapsed, setCollapsedRaw] = useState(loadCollapsed)
   const [addingTag, setAddingTag]     = useState(false)
@@ -88,7 +89,7 @@ export default function ObservationFilterPanel({
   }
 
   // ── collapsed pill ────────────────────────────────────────────
-  if (collapsed) {
+  if (collapsed || forceCollapsed) {
     return (
       <div style={s.pillWrap}>
         <button style={s.pill} onClick={() => setCollapsed(false)}>
@@ -366,8 +367,8 @@ const s = {
   },
   sectionLabel: {
     display: 'block', marginBottom: 6,
-    color: T.textFaint, fontSize: 9, fontWeight: 700,
-    letterSpacing: '0.12em', textTransform: 'uppercase',
+    color: T.textFaint, fontSize: 10, fontWeight: 700,
+    letterSpacing: '0.1em', textTransform: 'uppercase',
   },
   chipRow: {
     display: 'flex', flexWrap: 'wrap', gap: 4,

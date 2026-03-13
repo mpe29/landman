@@ -555,7 +555,7 @@ const styles = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
   },
   tagSectionLabel: {
-    fontSize: 11, fontWeight: 700, letterSpacing: '0.07em',
+    fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
     textTransform: 'uppercase', color: T.textMuted,
   },
   tagAddBtn: {
@@ -606,9 +606,9 @@ const styles = {
     justifyContent: 'space-between',
   },
   sectionTitle: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 700,
-    letterSpacing: '0.07em',
+    letterSpacing: '0.08em',
     textTransform: 'uppercase',
     color: T.textMuted,
   },

@@ -121,7 +121,7 @@ const styles = {
   groupLabel: {
     display: 'block',
     color: T.textFaint,
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: 700,
     letterSpacing: '0.1em',
     textTransform: 'uppercase',
