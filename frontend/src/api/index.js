@@ -127,7 +127,7 @@ export const api = {
     return data
   },
 
-  async createObservation({ propertyId, operationId, geom, observedAt, type, notes, imageUrl }) {
+  async createObservation({ propertyId, operationId, geom, observedAt, type, notes, imageUrl, bearing }) {
     const { data, error } = await supabase.rpc('create_observation', {
       p_property_id:  propertyId,
       p_operation_id: operationId || null,
@@ -136,6 +136,7 @@ export const api = {
       p_type:         type || null,
       p_notes:        notes || null,
       p_image_url:    imageUrl || null,
+      p_bearing:      bearing ?? null,
     })
     if (error) throw error
     return data

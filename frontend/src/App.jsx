@@ -185,7 +185,10 @@ export default function App() {
       />
 
       {/* ── Top-left: app menu ── */}
-      <MainMenu />
+      <MainMenu
+        isOpen={openPanel === 'menu'}
+        onOpen={() => handlePanelOpen('menu')}
+      />
 
       {/* ── Bottom-left: stacked panels (only one open at a time) ── */}
       <div style={stackStyle}>
@@ -272,6 +275,6 @@ const stackStyle = {
   zIndex: 10,
   display: 'flex',
   flexDirection: 'column',
+  alignItems: 'flex-start',
   gap: 6,
-  width: 240,
 }

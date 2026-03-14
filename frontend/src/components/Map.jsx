@@ -444,7 +444,7 @@ function HomeControl({ map, homeView, layerVisibility, onSetHome, onRestoreVisib
         title="Fly to home view"
         style={{ ...hc.btn, opacity: homeView ? 1 : 0.4 }}
       >
-        {flash === 'home' ? '✓' : '⌂'}
+        {flash === 'home' ? '✓' : '🏠'}
       </button>
       <button
         onClick={setHome}

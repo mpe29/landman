@@ -13,6 +13,11 @@ const LEVEL_COLOR = {
 
 const CONDITION_OPTIONS = ['good', 'fair', 'poor', 'damaged']
 
+function bearingToCardinal(deg) {
+  const dirs = ['N','NE','E','SE','S','SW','W','NW']
+  return dirs[Math.round(deg / 45) % 8]
+}
+
 export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, camps, propertyId, tagTypes = [] }) {
   const { featureType, data } = feature
 
@@ -186,6 +191,9 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, cam
           {featureType === 'observation' && data.observed_at && (
             <span style={styles.meta}>
               {new Date(data.observed_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+              {data.bearing != null && (
+                <span style={styles.bearing}> · {bearingToCardinal(data.bearing)} {data.bearing}°</span>
+              )}
             </span>
           )}
         </div>
@@ -433,6 +441,10 @@ const styles = {
     color: T.textFaint,
     fontSize: 11,
     marginTop: 2,
+  },
+  bearing: {
+    color: T.textFaint,
+    fontSize: 11,
   },
   closeBtn: {
     background: 'transparent',

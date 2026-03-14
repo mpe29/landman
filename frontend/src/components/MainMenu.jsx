@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { T } from '../constants/theme'
 
 const MENU_ITEMS = [
@@ -10,31 +10,31 @@ const MENU_ITEMS = [
   { id: 'logout',       label: 'Log Out' },
 ]
 
-export default function MainMenu() {
-  const [open, setOpen] = useState(false)
+export default function MainMenu({ isOpen, onOpen }) {
   const ref = useRef(null)
 
+  // Close on outside click
   useEffect(() => {
-    if (!open) return
-    const handler = (e) => { if (!ref.current?.contains(e.target)) setOpen(false) }
+    if (!isOpen) return
+    const handler = (e) => { if (!ref.current?.contains(e.target)) onOpen() }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [open])
+  }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div ref={ref} style={s.wrap}>
-      <button style={s.trigger} onClick={() => setOpen((o) => !o)}>
+      <button style={s.trigger} onClick={onOpen}>
         <span style={s.logo}>LANDMAN</span>
-        <span style={{ ...s.chevron, transform: open ? 'rotate(180deg)' : 'none' }}>▾</span>
+        <span style={{ ...s.chevron, transform: isOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
       </button>
 
-      {open && (
+      {isOpen && (
         <div style={s.dropdown}>
           {MENU_ITEMS.map((item, i) =>
             item.divider
               ? <div key={i} style={s.divider} />
               : (
-                <button key={item.id} style={s.item} onClick={() => setOpen(false)}>
+                <button key={item.id} style={s.item} onClick={onOpen}>
                   {item.label}
                 </button>
               )
