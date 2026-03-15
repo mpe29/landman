@@ -39,8 +39,8 @@ export const T = {
 
   // Layer / map semantic colours
   mapProperty: C.pistachioGreen,
-  mapFarm:     C.dryGrassYellow,
-  mapCamp:     C.dustyBlue,
+  mapFarm:     C.dustyBlue,
+  mapCamp:     C.dryGrassYellow,
   mapObs:      C.burntOrange,
   mapInfra:    C.burntOrange,
 

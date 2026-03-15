@@ -4,8 +4,8 @@ import { T } from '../constants/theme'
 
 const AREA_MODES = [
   { id: 'draw_property', label: 'Property', color: '#8FAF7A' },
-  { id: 'draw_farm',     label: 'Farm',     color: '#D4B646' },
-  { id: 'draw_camp',     label: 'Camp',     color: '#4C7A8C' },
+  { id: 'draw_farm',     label: 'Farm',     color: '#4C7A8C' },
+  { id: 'draw_camp',     label: 'Camp',     color: '#D4B646' },
 ]
 
 function loadSection() {

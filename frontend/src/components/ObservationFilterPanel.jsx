@@ -21,8 +21,6 @@ export default function ObservationFilterPanel({
   onChange,
   onAddTagType,
   filteredCount,
-  heatmap,
-  onHeatmapToggle,
   onObservationClick,  // opens the Add Observation modal
   isOpen,
   onOpen,
@@ -96,13 +94,6 @@ export default function ObservationFilterPanel({
               Clear
             </span>
           )}
-          <span
-            style={{ ...s.heatBtn, ...(heatmap ? s.heatBtnOn : {}) }}
-            onClick={(e) => { e.stopPropagation(); onHeatmapToggle?.() }}
-            title={heatmap ? 'Switch to point view' : 'Switch to heat map'}
-          >
-            {heatmap ? '●' : '≋'}
-          </span>
           <span style={s.chevron}>{isOpen ? '▾' : '▸'}</span>
         </span>
       </button>
@@ -296,18 +287,6 @@ const s = {
     color: T.danger, fontSize: 10, fontWeight: 600, letterSpacing: '0.05em',
     cursor: 'pointer', padding: '2px 6px', borderRadius: 4,
     border: `1px solid ${T.dangerBorder}`, background: T.dangerBg,
-  },
-  heatBtn: {
-    width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    background: 'transparent', border: `1px solid ${T.surfaceBorder}`,
-    borderRadius: 5, cursor: 'pointer',
-    fontSize: 12, color: T.textMuted, fontFamily: 'inherit', padding: 0,
-    transition: 'all 0.15s',
-  },
-  heatBtnOn: {
-    background: C.burntOrange + '18',
-    borderColor: C.burntOrange + '55',
-    color: C.burntOrange,
   },
   chevron: { color: T.textFaint, fontSize: 11 },
 

@@ -3,7 +3,7 @@ import mapboxgl from 'mapbox-gl'
 import MapboxDraw from '@mapbox/mapbox-gl-draw'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css'
-import { api } from '../api'
+import { api, supabase } from '../api'
 import { POINT_TYPES, POINT_DRAW_MODES } from '../constants/pointTypes'
 import { ACTIVE_LAYERS } from '../constants/layers'
 import { filterObservations } from '../utils/obsFilter'
@@ -20,12 +20,13 @@ const POINT_COLOR_EXPR = [
 
 // Fetch all spatial data and partition into layer buckets
 async function loadAllData() {
-  const [properties, areas, pointAssets, observations, livestockCounts] = await Promise.all([
+  const [properties, areas, pointAssets, observations, livestockCounts, devicePositions] = await Promise.all([
     api.getProperties(),
     api.getAreas(),
     api.getPointAssets(),
     api.getObservations(),
     api.getLivestockCampCounts(),
+    api.getDevicePositions(),
   ])
   return {
     properties,
@@ -34,6 +35,38 @@ async function loadAllData() {
     point_assets:     pointAssets,
     observations,
     livestock_counts: livestockCounts,
+    live_devices:     devicePositions,
+  }
+}
+
+// Convert device_positions rows → GeoJSON FeatureCollection with staleness status
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000
+function toDeviceFC(devices) {
+  const now = Date.now()
+  return {
+    type: 'FeatureCollection',
+    features: devices
+      .filter((d) => d.lat != null && d.lng != null)
+      .map((d) => {
+        const age    = d.last_seen_at ? now - new Date(d.last_seen_at).getTime() : Infinity
+        const status = !d.active ? 'inactive' : age < TWO_HOURS_MS ? 'fresh' : 'stale'
+        return {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [d.lng, d.lat] },
+          properties: {
+            id:               d.id,
+            name:             d.name,
+            dev_eui:          d.dev_eui,
+            active:           d.active,
+            last_seen_at:     d.last_seen_at,
+            battery_pct:      d.battery_pct,
+            area_name:        d.area_name,
+            device_type_name: d.device_type_name,
+            device_type_icon: d.device_type_icon ?? '📡',
+            status,
+          },
+        }
+      }),
   }
 }
 
@@ -55,6 +88,45 @@ function toFC(items, geomKey = 'boundary') {
   }
 }
 
+// Approximate GeoJSON circle polygon from center + radius (meters)
+function geoCircle(lng, lat, radiusMeters, steps = 64) {
+  const R = 6371000
+  const coords = []
+  for (let i = 0; i <= steps; i++) {
+    const angle = (i / steps) * 2 * Math.PI
+    const dx = radiusMeters * Math.cos(angle)
+    const dy = radiusMeters * Math.sin(angle)
+    const dLng = (dx / (R * Math.cos((lat * Math.PI) / 180))) * (180 / Math.PI)
+    const dLat = (dy / R) * (180 / Math.PI)
+    coords.push([lng + dLng, lat + dLat])
+  }
+  return { type: 'Polygon', coordinates: [coords] }
+}
+
+// Inject GPS dot CSS once
+let gpsCssInjected = false
+function injectGpsCss() {
+  if (gpsCssInjected) return
+  gpsCssInjected = true
+  const style = document.createElement('style')
+  style.textContent = `
+    .gps-dot {
+      width: 16px; height: 16px;
+      background: #3b82f6;
+      border: 2.5px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+      animation: gps-pulse 2s ease-out infinite;
+    }
+    @keyframes gps-pulse {
+      0%   { box-shadow: 0 0 0 0   rgba(59,130,246,0.55), 0 1px 4px rgba(0,0,0,0.35); }
+      70%  { box-shadow: 0 0 0 14px rgba(59,130,246,0),   0 1px 4px rgba(0,0,0,0.35); }
+      100% { box-shadow: 0 0 0 0   rgba(59,130,246,0),    0 1px 4px rgba(0,0,0,0.35); }
+    }
+  `
+  document.head.appendChild(style)
+}
+
 export default function Map({
   mode,
   reloadKey,
@@ -74,7 +146,11 @@ export default function Map({
   const draw             = useRef(null)
   const heatmapRef       = useRef(false)        // shadow for layerVisibility effect
   const onFeatureClickRef = useRef(onFeatureClick) // always-current ref (avoids stale closure)
-  const [ready, setReady] = useState(false)
+  const gpsWatchRef      = useRef(null)
+  const gpsMarkerRef     = useRef(null)
+  const gpsFlyDoneRef    = useRef(false)
+  const [ready, setReady]       = useState(false)
+  const [gpsActive, setGpsActive] = useState(false)
 
   // Keep the ref current whenever the prop changes
   useEffect(() => { onFeatureClickRef.current = onFeatureClick }, [onFeatureClick])
@@ -174,6 +250,48 @@ export default function Map({
               'text-halo-width': 2,
             },
           })
+        } else if (layer.type === 'device') {
+          // Circle background — color encodes staleness
+          const deviceColorExpr = [
+            'match', ['get', 'status'],
+            'fresh',    '#22c55e',  // green  — seen within 2h
+            'stale',    '#f59e0b',  // amber  — seen > 2h ago
+            /* inactive */ '#9ca3af',  // grey
+          ]
+          map.current.addLayer({
+            id: `${layer.id}-circle`, type: 'circle', source: layer.id,
+            layout: { visibility: layer.defaultVisible ? 'visible' : 'none' },
+            paint: {
+              'circle-radius':       14,
+              'circle-color':        deviceColorExpr,
+              'circle-opacity':      0.25,
+              'circle-stroke-color': deviceColorExpr,
+              'circle-stroke-width': 2,
+            },
+          })
+          // Emoji icon on top
+          map.current.addLayer({
+            id: `${layer.id}-symbol`, type: 'symbol', source: layer.id,
+            layout: {
+              visibility:              layer.defaultVisible ? 'visible' : 'none',
+              'text-field':            ['get', 'device_type_icon'],
+              'text-size':             16,
+              'text-anchor':           'center',
+              'text-allow-overlap':    true,
+              'text-ignore-placement': true,
+            },
+            paint: {
+              'text-color':      '#111827',
+              'text-halo-color': '#ffffff',
+              'text-halo-width': 1,
+            },
+          })
+          map.current.on('click', `${layer.id}-circle`, (e) => {
+            if (touchHandled) { touchHandled = false; return }
+            onFeatureClickRef.current?.({ featureType: layer.featureType, data: e.features[0].properties })
+          })
+          map.current.on('mouseenter', `${layer.id}-circle`, () => { map.current.getCanvas().style.cursor = 'pointer' })
+          map.current.on('mouseleave', `${layer.id}-circle`, () => { map.current.getCanvas().style.cursor = '' })
         }
       })
 
@@ -199,6 +317,20 @@ export default function Map({
         },
       }, 'observations-circle') // insert behind the circles
 
+      // ── GPS accuracy ring ─────────────────────────────────────────
+      map.current.addSource('gps-accuracy', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addLayer({
+        id: 'gps-accuracy-fill', type: 'fill', source: 'gps-accuracy',
+        paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.08 },
+      })
+      map.current.addLayer({
+        id: 'gps-accuracy-outline', type: 'line', source: 'gps-accuracy',
+        paint: { 'line-color': '#3b82f6', 'line-width': 1.2, 'line-opacity': 0.45 },
+      })
+
       // ── Mobile: canvas touchend for reliable small-feature taps ──
       // map.on('click', layerId, ...) works on desktop but on iOS the
       // rendered circle is only 6px radius — too small for a fingertip.
@@ -207,7 +339,7 @@ export default function Map({
       // during map panning. touchHandled prevents the subsequent Mapbox
       // synthesised click event from firing a second dispatch.
       const polyFillIds  = ACTIVE_LAYERS.filter((l) => l.type === 'polygon').map((l) => `${l.id}-fill`)
-      const pointCircIds = ACTIVE_LAYERS.filter((l) => l.type === 'point' && l.id !== 'observations').map((l) => `${l.id}-circle`)
+      const pointCircIds = ACTIVE_LAYERS.filter((l) => (l.type === 'point' || l.type === 'device') && l.id !== 'observations').map((l) => `${l.id}-circle`)
 
       const canvas = map.current.getCanvas()
       let touchStartX = 0, touchStartY = 0
@@ -292,8 +424,9 @@ export default function Map({
       const vis = layerVisibility[layer.id] !== false ? 'visible' : 'none'
       const ids =
         layer.type === 'polygon' ? [`${layer.id}-fill`, `${layer.id}-outline`]
-        : layer.type === 'point'  ? [`${layer.id}-circle`]
-        : layer.type === 'symbol' ? [`${layer.id}-symbol`]
+        : layer.type === 'point'   ? [`${layer.id}-circle`]
+        : layer.type === 'symbol'  ? [`${layer.id}-symbol`]
+        : layer.type === 'device'  ? [`${layer.id}-circle`, `${layer.id}-symbol`]
         : [`${layer.id}-line`]
       ids.forEach((lid) => {
         if (!map.current.getLayer(lid)) return
@@ -329,6 +462,7 @@ export default function Map({
       map.current.getSource('camps')?.setData(toFC(buckets.camps))
       map.current.getSource('point_assets')?.setData(toFC(buckets.point_assets, 'geom'))
       map.current.getSource('livestock_counts')?.setData(toFC(buckets.livestock_counts, 'geom'))
+      map.current.getSource('live_devices')?.setData(toDeviceFC(buckets.live_devices))
 
       // Apply observation filter before feeding to map source
       lastObsRef.current = buckets.observations
@@ -400,6 +534,92 @@ export default function Map({
       map.current.setLayoutProperty('observations-circle', 'visibility', heatmap ? 'none' : 'visible')
   }, [ready, heatmap])
 
+  // ── Realtime: update device positions on new sensor reading ───
+  useEffect(() => {
+    if (!ready) return
+    const channel = supabase
+      .channel('sensor_readings_live')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sensor_readings' }, () => {
+        api.getDevicePositions().then((devices) => {
+          map.current.getSource('live_devices')?.setData(toDeviceFC(devices))
+        }).catch(console.error)
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [ready]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── GPS locate ────────────────────────────────────────────────
+  const stopGps = () => {
+    if (gpsWatchRef.current != null) {
+      navigator.geolocation.clearWatch(gpsWatchRef.current)
+      gpsWatchRef.current = null
+    }
+    gpsMarkerRef.current?.remove()
+    gpsMarkerRef.current = null
+    gpsFlyDoneRef.current = false
+    map.current?.getSource('gps-accuracy')?.setData({ type: 'FeatureCollection', features: [] })
+    setGpsActive(false)
+  }
+
+  const toggleGps = () => {
+    if (!ready) return
+    if (gpsActive) { stopGps(); return }
+
+    if (!navigator.geolocation) {
+      alert('Location is not available in this browser.')
+      return
+    }
+
+    // Geolocation only works on HTTPS (or localhost). Warn early on HTTP.
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+      alert('Location requires a secure connection (HTTPS). Open the app via HTTPS to use GPS.')
+      return
+    }
+
+    injectGpsCss()
+    setGpsActive(true)
+
+    gpsWatchRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { longitude: lng, latitude: lat, accuracy } = pos.coords
+
+        // Update accuracy ring
+        map.current.getSource('gps-accuracy')?.setData({
+          type: 'FeatureCollection',
+          features: [{ type: 'Feature', geometry: geoCircle(lng, lat, accuracy), properties: {} }],
+        })
+
+        // Create or reposition the dot marker
+        if (!gpsMarkerRef.current) {
+          const el = document.createElement('div')
+          el.className = 'gps-dot'
+          gpsMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: 'center' })
+            .setLngLat([lng, lat])
+            .addTo(map.current)
+        } else {
+          gpsMarkerRef.current.setLngLat([lng, lat])
+        }
+
+        // Fly to location on first fix
+        if (!gpsFlyDoneRef.current) {
+          gpsFlyDoneRef.current = true
+          map.current.flyTo({ center: [lng, lat], zoom: Math.max(map.current.getZoom(), 15), duration: 1400 })
+        }
+      },
+      (err) => {
+        stopGps()
+        const msg = err.code === 1 ? 'Location permission denied. Check your browser/device settings.'
+          : err.code === 2 ? 'Location unavailable. Check device GPS is enabled.'
+          : 'Location request timed out.'
+        alert(msg)
+      },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
+    )
+  }
+
+  // Clean up GPS watch on unmount
+  useEffect(() => () => stopGps(), []) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
@@ -410,6 +630,8 @@ export default function Map({
           layerVisibility={layerVisibility}
           onSetHome={onSetHome}
           onRestoreVisibility={onRestoreVisibility}
+          gpsActive={gpsActive}
+          onToggleGps={toggleGps}
         />
       )}
     </div>
@@ -418,7 +640,7 @@ export default function Map({
 
 /* ── Home Control ────────────────────────────────────────────────── */
 
-function HomeControl({ map, homeView, layerVisibility, onSetHome, onRestoreVisibility }) {
+function HomeControl({ map, homeView, layerVisibility, onSetHome, onRestoreVisibility, gpsActive, onToggleGps }) {
   const [flash, setFlash] = useState(null) // 'saved' | 'home'
 
   const goHome = () => {
@@ -453,6 +675,13 @@ function HomeControl({ map, homeView, layerVisibility, onSetHome, onRestoreVisib
       >
         {flash === 'saved' ? '✓' : '📍'}
       </button>
+      <button
+        onClick={onToggleGps}
+        title={gpsActive ? 'Stop GPS tracking' : 'Show my location'}
+        style={{ ...hc.btn, ...(gpsActive ? hc.btnGpsOn : {}) }}
+      >
+        ◎
+      </button>
     </div>
   )
 }
@@ -481,5 +710,11 @@ const hc = {
     justifyContent: 'center',
     transition: 'all 0.15s',
     padding: 0,
+    color: T.textMuted,
+  },
+  btnGpsOn: {
+    background: '#3b82f618',
+    borderColor: '#3b82f655',
+    color: '#3b82f6',
   },
 }

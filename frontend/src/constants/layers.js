@@ -46,7 +46,7 @@ export const LAYERS = [
     label:          'Farms',
     group:          'areas',
     type:           'polygon',
-    color:          '#D4B646',
+    color:          '#4C7A8C',
     fillOpacity:    0.12,
     lineWidth:      1.8,
     featureType:    'area',
@@ -57,9 +57,9 @@ export const LAYERS = [
     label:          'Camps / Paddocks',
     group:          'areas',
     type:           'polygon',
-    color:          '#4C7A8C',
-    fillOpacity:    0.12,
-    lineWidth:      1.2,
+    color:          '#D4B646',
+    fillOpacity:    0.15,
+    lineWidth:      1.8,
     featureType:    'area',
     defaultVisible: true,
   },
@@ -123,6 +123,14 @@ export const LAYERS = [
     group:          'field_data',
     type:           'symbol',
     featureType:    null,            // symbol layer — not clickable
+    defaultVisible: true,
+  },
+  {
+    id:             'live_devices',
+    label:          'Live Devices',
+    group:          'field_data',
+    type:           'device',        // special: circle background + emoji symbol on top
+    featureType:    'device',
     defaultVisible: true,
   },
 ]

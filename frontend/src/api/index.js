@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabase = createClient(
+export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY,
 )
@@ -351,6 +351,15 @@ export const api = {
   async deleteLivestock(id) {
     const { error } = await supabase.from('livestock').delete().eq('id', id)
     if (error) throw error
+  },
+
+  // ---------------------------------------------------------------
+  // Devices / IoT
+  // ---------------------------------------------------------------
+  async getDevicePositions() {
+    const { data, error } = await supabase.from('device_positions').select('*')
+    if (error) throw error
+    return data
   },
 
   // ---------------------------------------------------------------

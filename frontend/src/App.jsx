@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { C, T } from './constants/theme'
 import Map from './components/Map'
 import MainMenu from './components/MainMenu'
 import Toolbar from './components/Toolbar'
@@ -198,25 +199,33 @@ export default function App() {
           isOpen={openPanel === 'create'}
           onOpen={() => handlePanelOpen('create')}
         />
-        <ObservationFilterPanel
-          observations={loadedData.observations}
-          tagTypes={tagTypes}
-          filter={obsFilter}
-          onChange={handleObsFilterChange}
-          onAddTagType={handleAddTagType}
-          filteredCount={filteredObsCount}
-          heatmap={heatmap}
-          onHeatmapToggle={() => setHeatmap((h) => !h)}
-          onObservationClick={() => setShowObsModal(true)}
-          isOpen={openPanel === 'observe'}
-          onOpen={() => handlePanelOpen('observe')}
-        />
         <LayerControl
           visibility={layerVisibility}
           onChange={handleLayerToggle}
           isOpen={openPanel === 'layers'}
           onOpen={() => handlePanelOpen('layers')}
         />
+        {/* OBSERVE + standalone heatmap toggle side by side */}
+        <div style={observeRowStyle}>
+          <ObservationFilterPanel
+            observations={loadedData.observations}
+            tagTypes={tagTypes}
+            filter={obsFilter}
+            onChange={handleObsFilterChange}
+            onAddTagType={handleAddTagType}
+            filteredCount={filteredObsCount}
+            onObservationClick={() => setShowObsModal(true)}
+            isOpen={openPanel === 'observe'}
+            onOpen={() => handlePanelOpen('observe')}
+          />
+          <button
+            style={{ ...heatBtnStyle, ...(heatmap ? heatBtnOnStyle : {}) }}
+            onClick={() => setHeatmap((h) => !h)}
+            title={heatmap ? 'Switch to point view' : 'Switch to heat map'}
+          >
+            {heatmap ? '●' : '≋'}
+          </button>
+        </div>
       </div>
 
       {/* Area draw modal */}
@@ -277,4 +286,25 @@ const stackStyle = {
   flexDirection: 'column',
   alignItems: 'flex-start',
   gap: 6,
+}
+
+const observeRowStyle = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: 6,
+}
+
+const heatBtnStyle = {
+  width: 30, height: 30,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  background: T.surface, backdropFilter: 'blur(10px)',
+  border: `1px solid ${T.surfaceBorder}`, borderRadius: 8,
+  boxShadow: T.surfaceShadow, cursor: 'pointer',
+  fontSize: 14, color: T.textMuted, fontFamily: 'inherit', padding: 0,
+  transition: 'all 0.15s', flexShrink: 0,
+}
+const heatBtnOnStyle = {
+  background: C.burntOrange + '18',
+  borderColor: C.burntOrange + '55',
+  color: C.burntOrange,
 }

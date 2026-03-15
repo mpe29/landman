@@ -11,13 +11,13 @@ const CONFIG = {
   draw_farm: {
     title: 'Save Farm',
     hint: 'Name this farm within your property.',
-    color: '#D4B646',
+    color: '#4C7A8C',
     showParent: false,
   },
   draw_camp: {
     title: 'Save Camp / Paddock',
     hint: 'Name this camp and select which farm it belongs to.',
-    color: '#4C7A8C',
+    color: '#D4B646',
     showParent: true,
   },
 }
