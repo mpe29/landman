@@ -3,6 +3,9 @@
 -- SHA-256 hex digest of the raw file bytes, computed client-side before upload.
 
 ALTER TABLE observations
+  ADD COLUMN IF NOT EXISTS bearing    INTEGER;
+
+ALTER TABLE observations
   ADD COLUMN IF NOT EXISTS image_hash TEXT;
 
 -- Unique per property so the same photo can't be uploaded twice to the same farm,
