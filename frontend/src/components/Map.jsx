@@ -355,15 +355,16 @@ export default function Map({
         source: 'live_devices',
         layout: { visibility: 'none' },
         paint: {
-          'heatmap-weight': 1,
-          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 3],
-          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 8, 9, 35],
+          // High weight + intensity so even 1-2 devices produce a visible blob
+          'heatmap-weight': 5,
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 3, 9, 8],
+          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 20, 9, 60],
           'heatmap-color': [
             'interpolate', ['linear'], ['heatmap-density'],
             0,    'rgba(78,91,60,0)',
-            0.25, '#86efac',
-            0.5,  C.pistachioGreen,
-            0.75, C.deepOlive,
+            0.1,  '#86efac',
+            0.4,  C.pistachioGreen,
+            0.7,  C.deepOlive,
             1,    '#14532d',
           ],
           'heatmap-opacity': 0.85,
@@ -774,6 +775,18 @@ export default function Map({
         delete deviceMarkersRef.current[id]
         delete deviceDataRef.current[id]
       }
+    })
+
+    // Keep the GeoJSON source in sync so the heatmap layer has data
+    map.current.getSource('live_devices')?.setData({
+      type: 'FeatureCollection',
+      features: devices
+        .filter((d) => d.lat != null && d.lng != null)
+        .map((d) => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [d.lng, d.lat] },
+          properties: {},
+        })),
     })
   }
 
