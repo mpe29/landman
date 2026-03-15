@@ -31,6 +31,8 @@ export default function App() {
   const [reloadKey, setReloadKey]         = useState(0)
   const [pendingGeometry, setPendingGeometry] = useState(null)
   const [saving, setSaving]               = useState(false)
+  const [editingBoundary, setEditingBoundary] = useState(null) // { featureType, id, name, boundary }
+  const [editedGeometry,  setEditedGeometry]  = useState(null) // latest geometry from draw.update
   const [loadedData, setLoadedData]       = useState({ properties: [], farms: [], camps: [], observations: [] })
   const [selectedFeature, setSelectedFeature] = useState(null)
   const [showObsModal, setShowObsModal]   = useState(false)
@@ -109,8 +111,36 @@ export default function App() {
 
   const handleModeChange = (newMode) => {
     setMode(newMode)
-    if (newMode === 'view') setPendingGeometry(null)
+    if (newMode === 'view') { setPendingGeometry(null); setEditingBoundary(null); setEditedGeometry(null) }
     if (newMode !== 'view') setSelectedFeature(null)
+  }
+
+  const handleEditBoundary = ({ featureType, id, name, boundary }) => {
+    setEditingBoundary({ featureType, id, name, boundary })
+    setEditedGeometry(null)
+    setSelectedFeature(null)
+    setMode('edit_boundary')
+  }
+
+  const handleSaveBoundary = async () => {
+    if (!editingBoundary) return
+    const geometry = editedGeometry ?? editingBoundary.boundary
+    setSaving(true)
+    try {
+      if (editingBoundary.featureType === 'area') {
+        await api.updateAreaBoundary(editingBoundary.id, geometry)
+      } else if (editingBoundary.featureType === 'property') {
+        await api.updatePropertyBoundary(editingBoundary.id, geometry)
+      }
+      setEditingBoundary(null)
+      setEditedGeometry(null)
+      setMode('view')
+      reload()
+    } catch (err) {
+      alert('Save failed: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleDrawComplete = (geometry) => setPendingGeometry(geometry)
@@ -173,6 +203,7 @@ export default function App() {
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <Map
         mode={mode}
+        editBoundary={editingBoundary}
         reloadKey={reloadKey}
         layerVisibility={layerVisibility}
         obsFilter={obsFilter}
@@ -180,6 +211,7 @@ export default function App() {
         onSetHome={handleSetHome}
         onRestoreVisibility={handleRestoreVisibility}
         onDrawComplete={handleDrawComplete}
+        onDrawUpdate={setEditedGeometry}
         onDataLoaded={handleDataLoaded}
         onFeatureClick={handleFeatureClick}
         selectedObsId={selectedFeature?.featureType === 'observation' ? selectedFeature.data?.id : null}
@@ -267,7 +299,7 @@ export default function App() {
       )}
 
       {/* Feature detail / edit panel */}
-      {selectedFeature && !pendingGeometry && !showObsModal && (
+      {selectedFeature && !pendingGeometry && !showObsModal && !editingBoundary && (
         <FeaturePanel
           feature={selectedFeature}
           camps={loadedData.camps}
@@ -276,10 +308,61 @@ export default function App() {
           onClose={() => setSelectedFeature(null)}
           onSaved={() => { reload(); setSelectedFeature(null) }}
           onDeleted={() => { reload(); setSelectedFeature(null) }}
+          onEditBoundary={handleEditBoundary}
+        />
+      )}
+
+      {/* Edit boundary floating bar */}
+      {editingBoundary && (
+        <EditBoundaryBar
+          name={editingBoundary.name}
+          saving={saving}
+          onSave={handleSaveBoundary}
+          onCancel={() => { setEditingBoundary(null); setEditedGeometry(null); setMode('view') }}
         />
       )}
     </div>
   )
+}
+
+/* ── Edit Boundary floating bar ──────────────────────────────────── */
+function EditBoundaryBar({ name, saving, onSave, onCancel }) {
+  return (
+    <div style={ebBar.wrap}>
+      <span style={ebBar.hint}>Editing: <strong>{name}</strong> — drag vertices or click midpoints to add</span>
+      <div style={ebBar.btns}>
+        <button style={ebBar.cancel} onClick={onCancel} disabled={saving}>Cancel</button>
+        <button style={ebBar.save}   onClick={onSave}   disabled={saving}>
+          {saving ? 'Saving…' : 'Save Boundary'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const ebBar = {
+  wrap: {
+    position: 'absolute', bottom: 32, left: '50%', transform: 'translateX(-50%)',
+    zIndex: 20,
+    background: T.surface, backdropFilter: 'blur(12px)',
+    border: `1px solid ${T.surfaceBorder}`, borderRadius: 10,
+    boxShadow: '0 4px 20px rgba(47,47,47,0.18)',
+    padding: '10px 16px',
+    display: 'flex', alignItems: 'center', gap: 12,
+    whiteSpace: 'nowrap',
+  },
+  hint: { fontSize: 12, color: T.textMuted },
+  btns: { display: 'flex', gap: 8 },
+  cancel: {
+    background: 'transparent', border: `1px solid ${T.surfaceBorder}`,
+    borderRadius: 6, color: T.textMuted, fontSize: 12,
+    padding: '6px 14px', cursor: 'pointer', fontFamily: 'inherit',
+  },
+  save: {
+    background: C.pistachioGreen, border: 'none',
+    borderRadius: 6, color: T.textOnDark, fontSize: 12, fontWeight: 700,
+    padding: '6px 14px', cursor: 'pointer', fontFamily: 'inherit',
+  },
 }
 
 const stackStyle = {

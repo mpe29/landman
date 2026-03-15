@@ -153,7 +153,7 @@ const dv = {
   muted: { fontSize: 12, color: T.textMuted },
 }
 
-export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, camps, propertyId, tagTypes = [] }) {
+export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, onEditBoundary, camps, propertyId, tagTypes = [] }) {
   const { featureType, data } = feature
 
   const [name, setName]           = useState(data.name || '')
@@ -501,6 +501,15 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, cam
           </button>
         )}
 
+        {(featureType === 'area' || featureType === 'property') && onEditBoundary && data._geometry && (
+          <button
+            style={styles.editBoundaryBtn}
+            onClick={() => onEditBoundary({ featureType, id: data.id, name: data.name, boundary: data._geometry })}
+          >
+            Edit Boundary
+          </button>
+        )}
+
         {!confirmDelete ? (
           <button style={styles.deleteBtn} onClick={() => setConfirmDelete(true)}>
             Delete
@@ -651,6 +660,17 @@ const styles = {
     fontSize: 13,
     fontWeight: 700,
     padding: '9px 0',
+    cursor: 'pointer',
+    width: '100%',
+    fontFamily: 'inherit',
+  },
+  editBoundaryBtn: {
+    background: 'transparent',
+    border: `1px solid ${T.surfaceBorder}`,
+    borderRadius: 6,
+    color: T.textMuted,
+    fontSize: 12,
+    padding: '7px 0',
     cursor: 'pointer',
     width: '100%',
     fontFamily: 'inherit',
