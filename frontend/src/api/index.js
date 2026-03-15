@@ -182,11 +182,27 @@ export const api = {
     if (error) throw error
   },
 
+  async updateAreaBoundary(id, boundary) {
+    const { error } = await supabase.rpc('update_area_boundary', {
+      p_id:       id,
+      p_boundary: boundary,
+    })
+    if (error) throw error
+  },
+
   async updateProperty(id, { name, owner }) {
     const { error } = await supabase
       .from('properties')
       .update({ name, owner: owner || null })
       .eq('id', id)
+    if (error) throw error
+  },
+
+  async updatePropertyBoundary(id, boundary) {
+    const { error } = await supabase.rpc('update_property_boundary', {
+      p_id:       id,
+      p_boundary: boundary,
+    })
     if (error) throw error
   },
 

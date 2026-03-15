@@ -164,6 +164,7 @@ function injectDeviceCss() {
 
 export default function Map({
   mode,
+  editBoundary,
   reloadKey,
   layerVisibility,
   obsFilter,
@@ -171,6 +172,7 @@ export default function Map({
   onSetHome,
   onRestoreVisibility,
   onDrawComplete,
+  onDrawUpdate,
   onDataLoaded,
   onFeatureClick,
   selectedObsId,
@@ -181,17 +183,22 @@ export default function Map({
   const draw             = useRef(null)
   const heatmapRef       = useRef(false)        // shadow for layerVisibility effect
   const onFeatureClickRef = useRef(onFeatureClick) // always-current ref (avoids stale closure)
+  const onDrawUpdateRef  = useRef(onDrawUpdate)
+  const modeRef          = useRef(mode)          // always-current mode for event listeners
   const gpsWatchRef      = useRef(null)
   const gpsMarkerRef     = useRef(null)
   const gpsFlyDoneRef    = useRef(false)
   // Device HTML markers — keyed by device id
   const deviceMarkersRef = useRef({})
+  const deviceDataRef    = useRef({})   // device data by id — for proximity selection
   const deviceVisRef     = useRef(true)         // current live_devices layer visibility
   const [ready, setReady]       = useState(false)
   const [gpsActive, setGpsActive] = useState(false)
 
-  // Keep the ref current whenever the prop changes
+  // Keep refs current whenever props change
   useEffect(() => { onFeatureClickRef.current = onFeatureClick }, [onFeatureClick])
+  useEffect(() => { onDrawUpdateRef.current   = onDrawUpdate   }, [onDrawUpdate])
+  useEffect(() => { modeRef.current           = mode           }, [mode])
 
   // ── Init map & draw once ───────────────────────────────────────
   useEffect(() => {
@@ -241,7 +248,10 @@ export default function Map({
           })
           map.current.on('click', `${layer.id}-fill`, (e) => {
             if (touchHandled) { touchHandled = false; return }
-            onFeatureClickRef.current?.({ featureType: layer.featureType, data: e.features[0].properties })
+            onFeatureClickRef.current?.({
+              featureType: layer.featureType,
+              data: { ...e.features[0].properties, _geometry: e.features[0].geometry },
+            })
           })
           map.current.on('mouseenter', `${layer.id}-fill`, () => { map.current.getCanvas().style.cursor = 'pointer' })
           map.current.on('mouseleave', `${layer.id}-fill`, () => { map.current.getCanvas().style.cursor = '' })
@@ -351,7 +361,32 @@ export default function Map({
         }
       }, { passive: true })
 
+      // Desktop: raw canvas click fires before Mapbox layer handlers.
+      // Check device marker proximity first so devices always win over
+      // observations or polygons when within 44px of a device dot.
+      canvas.addEventListener('click', (e) => {
+        if (modeRef.current !== 'view') return  // draw/edit modes handle their own events
+        if (touchHandled) return  // mobile touch already dispatched
+        const rect = canvas.getBoundingClientRect()
+        const cx = e.clientX - rect.left
+        const cy = e.clientY - rect.top
+        for (const [id, marker] of Object.entries(deviceMarkersRef.current)) {
+          const el = marker.getElement()
+          if (el.style.display === 'none') continue
+          const mRect = el.getBoundingClientRect()
+          const mx = mRect.left + mRect.width / 2 - rect.left
+          const my = mRect.top + mRect.height / 2 - rect.top
+          if (Math.hypot(cx - mx, cy - my) <= 22) {
+            markTouchHandled()
+            const data = deviceDataRef.current[id]
+            if (data) onFeatureClickRef.current?.({ featureType: 'device', data })
+            return
+          }
+        }
+      })
+
       canvas.addEventListener('touchend', (e) => {
+        if (modeRef.current !== 'view') return  // draw/edit modes handle their own events
         if (e.changedTouches.length !== 1) return
         const touch = e.changedTouches[0]
         // Ignore if the finger moved (pan gesture)
@@ -361,6 +396,21 @@ export default function Map({
         const rect = canvas.getBoundingClientRect()
         const cx = touch.clientX - rect.left
         const cy = touch.clientY - rect.top
+
+        // 0. Device markers — highest priority, 44px hit zone
+        for (const [id, marker] of Object.entries(deviceMarkersRef.current)) {
+          const el = marker.getElement()
+          if (el.style.display === 'none') continue
+          const mRect = el.getBoundingClientRect()
+          const mx = mRect.left + mRect.width / 2 - rect.left
+          const my = mRect.top + mRect.height / 2 - rect.top
+          if (Math.hypot(cx - mx, cy - my) <= 22) {
+            markTouchHandled()
+            const data = deviceDataRef.current[id]
+            if (data) onFeatureClickRef.current?.({ featureType: 'device', data })
+            return
+          }
+        }
 
         // 1. Observations — 44px diameter hit zone
         const obsHits = map.current.queryRenderedFeatures(
@@ -395,7 +445,10 @@ export default function Map({
             markTouchHandled()
             const lb    = polyHits[0].layer.id.replace('-fill', '')
             const layer = ACTIVE_LAYERS.find((l) => l.id === lb)
-            onFeatureClickRef.current?.({ featureType: layer?.featureType, data: polyHits[0].properties })
+            onFeatureClickRef.current?.({
+              featureType: layer?.featureType,
+              data: { ...polyHits[0].properties, _geometry: polyHits[0].geometry },
+            })
           }
         }
       }, { passive: true })
@@ -406,6 +459,10 @@ export default function Map({
     map.current.on('draw.create', (e) => {
       const geometry = e.features[0]?.geometry
       if (geometry) onDrawComplete(geometry)
+    })
+    map.current.on('draw.update', (e) => {
+      const geometry = e.features[0]?.geometry
+      if (geometry) onDrawUpdateRef.current?.(geometry)
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -449,7 +506,17 @@ export default function Map({
   useEffect(() => {
     if (!ready || !draw.current) return
     const isPoint = POINT_DRAW_MODES.has(mode)
-    if (mode !== 'view') {
+    if (mode === 'edit_boundary') {
+      draw.current.deleteAll()
+      if (editBoundary?.boundary) {
+        const ids = draw.current.add({ type: 'Feature', geometry: editBoundary.boundary, properties: {} })
+        if (ids?.length > 0) {
+          // direct_select shows all vertex handles immediately for dragging + midpoint clicks to add vertices
+          draw.current.changeMode('direct_select', { featureId: ids[0] })
+        }
+      }
+      map.current.getCanvas().style.cursor = ''
+    } else if (mode !== 'view') {
       draw.current.deleteAll()
       draw.current.changeMode(isPoint ? 'draw_point' : 'draw_polygon')
       map.current.getCanvas().style.cursor = 'crosshair'
@@ -458,7 +525,7 @@ export default function Map({
       draw.current.deleteAll()
       map.current.getCanvas().style.cursor = ''
     }
-  }, [mode, ready])
+  }, [mode, ready, editBoundary])
 
   // ── Load / reload all spatial data ────────────────────────────
   useEffect(() => {
@@ -642,12 +709,14 @@ export default function Map({
         const age    = d.last_seen_at ? now - new Date(d.last_seen_at).getTime() : Infinity
         const status = !d.active ? 'inactive' : age < TWO_HOURS_MS ? 'fresh' : 'stale'
 
+        deviceDataRef.current[d.id] = { ...d, status }
+
         if (!deviceMarkersRef.current[d.id]) {
           injectDeviceCss()
           const el = document.createElement('div')
           el.className = `device-dot ${status}`
           el.addEventListener('click', () => {
-            onFeatureClickRef.current?.({ featureType: 'device', data: { ...d, status } })
+            onFeatureClickRef.current?.({ featureType: 'device', data: deviceDataRef.current[d.id] ?? { ...d, status } })
           })
           deviceMarkersRef.current[d.id] = new mapboxgl.Marker({ element: el, anchor: 'center' })
             .setLngLat([d.lng, d.lat])
@@ -665,6 +734,7 @@ export default function Map({
       if (!seenIds.has(id)) {
         deviceMarkersRef.current[id].remove()
         delete deviceMarkersRef.current[id]
+        delete deviceDataRef.current[id]
       }
     })
   }
