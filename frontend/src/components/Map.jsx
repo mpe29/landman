@@ -164,6 +164,7 @@ function injectDeviceCss() {
 
 export default function Map({
   mode,
+  editBoundary,
   reloadKey,
   layerVisibility,
   obsFilter,
@@ -171,27 +172,35 @@ export default function Map({
   onSetHome,
   onRestoreVisibility,
   onDrawComplete,
+  onDrawUpdate,
   onDataLoaded,
   onFeatureClick,
   selectedObsId,
-  heatmap,
+  obsMode,
+  deviceMode,
 }) {
   const mapContainer     = useRef(null)
   const map              = useRef(null)
   const draw             = useRef(null)
-  const heatmapRef       = useRef(false)        // shadow for layerVisibility effect
+  const obsModeRef       = useRef('individual')  // shadow for layerVisibility effect
+  const deviceModeRef    = useRef('individual')  // shadow for layerVisibility effect
   const onFeatureClickRef = useRef(onFeatureClick) // always-current ref (avoids stale closure)
+  const onDrawUpdateRef  = useRef(onDrawUpdate)
+  const modeRef          = useRef(mode)          // always-current mode for event listeners
   const gpsWatchRef      = useRef(null)
   const gpsMarkerRef     = useRef(null)
   const gpsFlyDoneRef    = useRef(false)
   // Device HTML markers — keyed by device id
   const deviceMarkersRef = useRef({})
+  const deviceDataRef    = useRef({})   // device data by id — for proximity selection
   const deviceVisRef     = useRef(true)         // current live_devices layer visibility
   const [ready, setReady]       = useState(false)
   const [gpsActive, setGpsActive] = useState(false)
 
-  // Keep the ref current whenever the prop changes
+  // Keep refs current whenever props change
   useEffect(() => { onFeatureClickRef.current = onFeatureClick }, [onFeatureClick])
+  useEffect(() => { onDrawUpdateRef.current   = onDrawUpdate   }, [onDrawUpdate])
+  useEffect(() => { modeRef.current           = mode           }, [mode])
 
   // ── Init map & draw once ───────────────────────────────────────
   useEffect(() => {
@@ -222,6 +231,21 @@ export default function Map({
         touchHandledTimer = setTimeout(() => { touchHandled = false }, 600)
       }
 
+      // Returns the nearest visible device's data if within 22px of canvas point (x, y),
+      // otherwise null. Used to give devices top selection priority over all Mapbox layers.
+      const nearestDevice = (x, y) => {
+        const cr = map.current.getCanvas().getBoundingClientRect()
+        for (const [id, marker] of Object.entries(deviceMarkersRef.current)) {
+          const el = marker.getElement()
+          if (el.style.display === 'none') continue
+          const mr = el.getBoundingClientRect()
+          const mx = mr.left + mr.width  / 2 - cr.left
+          const my = mr.top  + mr.height / 2 - cr.top
+          if (Math.hypot(x - mx, y - my) <= 22) return deviceDataRef.current[id]
+        }
+        return null
+      }
+
       ACTIVE_LAYERS.forEach((layer) => {
         map.current.addSource(layer.id, {
           type: 'geojson',
@@ -241,7 +265,12 @@ export default function Map({
           })
           map.current.on('click', `${layer.id}-fill`, (e) => {
             if (touchHandled) { touchHandled = false; return }
-            onFeatureClickRef.current?.({ featureType: layer.featureType, data: e.features[0].properties })
+            const device = nearestDevice(e.point.x, e.point.y)
+            if (device) { onFeatureClickRef.current?.({ featureType: 'device', data: device }); return }
+            onFeatureClickRef.current?.({
+              featureType: layer.featureType,
+              data: { ...e.features[0].properties, _geometry: e.features[0].geometry },
+            })
           })
           map.current.on('mouseenter', `${layer.id}-fill`, () => { map.current.getCanvas().style.cursor = 'pointer' })
           map.current.on('mouseleave', `${layer.id}-fill`, () => { map.current.getCanvas().style.cursor = '' })
@@ -259,6 +288,8 @@ export default function Map({
           })
           map.current.on('click', `${layer.id}-circle`, (e) => {
             if (touchHandled) { touchHandled = false; return }
+            const device = nearestDevice(e.point.x, e.point.y)
+            if (device) { onFeatureClickRef.current?.({ featureType: 'device', data: device }); return }
             onFeatureClickRef.current?.({ featureType: layer.featureType, data: e.features[0].properties })
           })
           map.current.on('mouseenter', `${layer.id}-circle`, () => { map.current.getCanvas().style.cursor = 'pointer' })
@@ -302,20 +333,46 @@ export default function Map({
         source: 'observations',
         layout: { visibility: 'none' },
         paint: {
+          // Low intensity + tight radius so hundreds of obs are needed to saturate.
+          // Color stops pushed right: warm colours only appear at genuine high density.
           'heatmap-weight': 1,
-          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 3],
-          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 5, 9, 28],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 0.4, 9, 1.2],
+          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 4, 9, 20],
           'heatmap-color': [
             'interpolate', ['linear'], ['heatmap-density'],
             0,    'rgba(78,91,60,0)',
-            0.25, C.pistachioGreen,
-            0.5,  C.dryGrassYellow,
-            0.75, C.burntOrange,
+            0.15, C.pistachioGreen,
+            0.4,  C.dryGrassYellow,
+            0.7,  C.burntOrange,
             1,    '#b91c1c',
           ],
           'heatmap-opacity': 0.85,
         },
       }, 'observations-circle') // insert behind the circles
+
+      // ── Device positions heatmap — green theme, starts hidden ────
+      map.current.addLayer({
+        id: 'devices-heat',
+        type: 'heatmap',
+        source: 'live_devices',
+        layout: { visibility: 'none' },
+        paint: {
+          // High weight so even 1-2 devices are visible; tighter radius than obs
+          // so the blob is proportionate to actual device position, not a giant smear.
+          'heatmap-weight': 5,
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 2, 9, 5],
+          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 12, 9, 40],
+          'heatmap-color': [
+            'interpolate', ['linear'], ['heatmap-density'],
+            0,    'rgba(78,91,60,0)',
+            0.1,  '#86efac',
+            0.4,  C.pistachioGreen,
+            0.7,  C.deepOlive,
+            1,    '#14532d',
+          ],
+          'heatmap-opacity': 0.85,
+        },
+      })
 
       // ── GPS accuracy ring ─────────────────────────────────────────
       map.current.addSource('gps-accuracy', {
@@ -352,6 +409,7 @@ export default function Map({
       }, { passive: true })
 
       canvas.addEventListener('touchend', (e) => {
+        if (modeRef.current !== 'view') return  // draw/edit modes handle their own events
         if (e.changedTouches.length !== 1) return
         const touch = e.changedTouches[0]
         // Ignore if the finger moved (pan gesture)
@@ -361,6 +419,21 @@ export default function Map({
         const rect = canvas.getBoundingClientRect()
         const cx = touch.clientX - rect.left
         const cy = touch.clientY - rect.top
+
+        // 0. Device markers — highest priority, 44px hit zone
+        for (const [id, marker] of Object.entries(deviceMarkersRef.current)) {
+          const el = marker.getElement()
+          if (el.style.display === 'none') continue
+          const mRect = el.getBoundingClientRect()
+          const mx = mRect.left + mRect.width / 2 - rect.left
+          const my = mRect.top + mRect.height / 2 - rect.top
+          if (Math.hypot(cx - mx, cy - my) <= 22) {
+            markTouchHandled()
+            const data = deviceDataRef.current[id]
+            if (data) onFeatureClickRef.current?.({ featureType: 'device', data })
+            return
+          }
+        }
 
         // 1. Observations — 44px diameter hit zone
         const obsHits = map.current.queryRenderedFeatures(
@@ -395,7 +468,10 @@ export default function Map({
             markTouchHandled()
             const lb    = polyHits[0].layer.id.replace('-fill', '')
             const layer = ACTIVE_LAYERS.find((l) => l.id === lb)
-            onFeatureClickRef.current?.({ featureType: layer?.featureType, data: polyHits[0].properties })
+            onFeatureClickRef.current?.({
+              featureType: layer?.featureType,
+              data: { ...polyHits[0].properties, _geometry: polyHits[0].geometry },
+            })
           }
         }
       }, { passive: true })
@@ -406,6 +482,10 @@ export default function Map({
     map.current.on('draw.create', (e) => {
       const geometry = e.features[0]?.geometry
       if (geometry) onDrawComplete(geometry)
+    })
+    map.current.on('draw.update', (e) => {
+      const geometry = e.features[0]?.geometry
+      if (geometry) onDrawUpdateRef.current?.(geometry)
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -423,11 +503,15 @@ export default function Map({
     ACTIVE_LAYERS.forEach((layer) => {
       if (layer.type === 'html_marker') {
         // Device markers are DOM elements — toggle display directly
-        const visible = layerVisibility[layer.id] !== false
-        deviceVisRef.current = visible
+        const layerOn = layerVisibility[layer.id] !== false
+        deviceVisRef.current = layerOn
+        const showDots = layerOn && deviceModeRef.current === 'individual'
+        const showHeat = layerOn && deviceModeRef.current === 'heatmap'
         Object.values(deviceMarkersRef.current).forEach((m) => {
-          m.getElement().style.display = visible ? '' : 'none'
+          m.getElement().style.display = showDots ? '' : 'none'
         })
+        if (map.current.getLayer('devices-heat'))
+          map.current.setLayoutProperty('devices-heat', 'visibility', showHeat ? 'visible' : 'none')
         return
       }
       const vis = layerVisibility[layer.id] !== false ? 'visible' : 'none'
@@ -438,8 +522,8 @@ export default function Map({
         : [`${layer.id}-line`]
       ids.forEach((lid) => {
         if (!map.current.getLayer(lid)) return
-        // While heatmap is active, keep observations circles hidden
-        const effectiveVis = (lid === 'observations-circle' && heatmapRef.current) ? 'none' : vis
+        // Keep circles hidden when not in individual mode
+        const effectiveVis = (lid === 'observations-circle' && obsModeRef.current !== 'individual') ? 'none' : vis
         map.current.setLayoutProperty(lid, 'visibility', effectiveVis)
       })
     })
@@ -449,7 +533,17 @@ export default function Map({
   useEffect(() => {
     if (!ready || !draw.current) return
     const isPoint = POINT_DRAW_MODES.has(mode)
-    if (mode !== 'view') {
+    if (mode === 'edit_boundary') {
+      draw.current.deleteAll()
+      if (editBoundary?.boundary) {
+        const ids = draw.current.add({ type: 'Feature', geometry: editBoundary.boundary, properties: {} })
+        if (ids?.length > 0) {
+          // direct_select shows all vertex handles immediately for dragging + midpoint clicks to add vertices
+          draw.current.changeMode('direct_select', { featureId: ids[0] })
+        }
+      }
+      map.current.getCanvas().style.cursor = ''
+    } else if (mode !== 'view') {
       draw.current.deleteAll()
       draw.current.changeMode(isPoint ? 'draw_point' : 'draw_polygon')
       map.current.getCanvas().style.cursor = 'crosshair'
@@ -458,7 +552,7 @@ export default function Map({
       draw.current.deleteAll()
       map.current.getCanvas().style.cursor = ''
     }
-  }, [mode, ready])
+  }, [mode, ready, editBoundary])
 
   // ── Load / reload all spatial data ────────────────────────────
   useEffect(() => {
@@ -532,15 +626,29 @@ export default function Map({
     }
   }, [ready, selectedObsId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Toggle heatmap / circle view ──────────────────────────────
+  // ── Observation display mode: individual | heatmap | hidden ──
   useEffect(() => {
     if (!ready) return
-    heatmapRef.current = !!heatmap
+    obsModeRef.current = obsMode
     if (map.current.getLayer('observations-heat'))
-      map.current.setLayoutProperty('observations-heat', 'visibility', heatmap ? 'visible' : 'none')
+      map.current.setLayoutProperty('observations-heat', 'visibility', obsMode === 'heatmap' ? 'visible' : 'none')
     if (map.current.getLayer('observations-circle'))
-      map.current.setLayoutProperty('observations-circle', 'visibility', heatmap ? 'none' : 'visible')
-  }, [ready, heatmap])
+      map.current.setLayoutProperty('observations-circle', 'visibility', obsMode === 'individual' ? 'visible' : 'none')
+  }, [ready, obsMode])
+
+  // ── Device display mode: individual | heatmap | hidden ────────
+  useEffect(() => {
+    if (!ready) return
+    deviceModeRef.current = deviceMode
+    const layerOn = deviceVisRef.current
+    const showDots = layerOn && deviceMode === 'individual'
+    const showHeat = layerOn && deviceMode === 'heatmap'
+    Object.values(deviceMarkersRef.current).forEach((m) => {
+      m.getElement().style.display = showDots ? '' : 'none'
+    })
+    if (map.current.getLayer('devices-heat'))
+      map.current.setLayoutProperty('devices-heat', 'visibility', showHeat ? 'visible' : 'none')
+  }, [ready, deviceMode])
 
   // ── Realtime: update device positions on new sensor reading ───
   useEffect(() => {
@@ -642,12 +750,14 @@ export default function Map({
         const age    = d.last_seen_at ? now - new Date(d.last_seen_at).getTime() : Infinity
         const status = !d.active ? 'inactive' : age < TWO_HOURS_MS ? 'fresh' : 'stale'
 
+        deviceDataRef.current[d.id] = { ...d, status }
+
         if (!deviceMarkersRef.current[d.id]) {
           injectDeviceCss()
           const el = document.createElement('div')
           el.className = `device-dot ${status}`
           el.addEventListener('click', () => {
-            onFeatureClickRef.current?.({ featureType: 'device', data: { ...d, status } })
+            onFeatureClickRef.current?.({ featureType: 'device', data: deviceDataRef.current[d.id] ?? { ...d, status } })
           })
           deviceMarkersRef.current[d.id] = new mapboxgl.Marker({ element: el, anchor: 'center' })
             .setLngLat([d.lng, d.lat])
@@ -657,7 +767,8 @@ export default function Map({
           marker.setLngLat([d.lng, d.lat])
           marker.getElement().className = `device-dot ${status}`
         }
-        deviceMarkersRef.current[d.id].getElement().style.display = visible ? '' : 'none'
+        deviceMarkersRef.current[d.id].getElement().style.display =
+          (visible && deviceModeRef.current === 'individual') ? '' : 'none'
       })
 
     // Remove markers for devices no longer in the list
@@ -665,7 +776,20 @@ export default function Map({
       if (!seenIds.has(id)) {
         deviceMarkersRef.current[id].remove()
         delete deviceMarkersRef.current[id]
+        delete deviceDataRef.current[id]
       }
+    })
+
+    // Keep the GeoJSON source in sync so the heatmap layer has data
+    map.current.getSource('live_devices')?.setData({
+      type: 'FeatureCollection',
+      features: devices
+        .filter((d) => d.lat != null && d.lng != null)
+        .map((d) => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [d.lng, d.lat] },
+          properties: {},
+        })),
     })
   }
 

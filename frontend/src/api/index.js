@@ -127,7 +127,7 @@ export const api = {
     return data
   },
 
-  async createObservation({ propertyId, operationId, geom, observedAt, type, notes, imageUrl, bearing }) {
+  async createObservation({ propertyId, operationId, geom, observedAt, type, notes, imageUrl, bearing, imageHash }) {
     const { data, error } = await supabase.rpc('create_observation', {
       p_property_id:  propertyId,
       p_operation_id: operationId || null,
@@ -137,6 +137,7 @@ export const api = {
       p_notes:        notes || null,
       p_image_url:    imageUrl || null,
       p_bearing:      bearing ?? null,
+      p_image_hash:   imageHash || null,
     })
     if (error) throw error
     return data
@@ -160,6 +161,44 @@ export const api = {
   // ---------------------------------------------------------------
   // Storage — observation images
   // ---------------------------------------------------------------
+
+  // Hash raw file bytes for duplicate detection.
+  // Uses SHA-256 (crypto.subtle) when available (HTTPS / localhost).
+  // Falls back to a pure-JS FNV-1a 64-bit hash on plain-HTTP contexts where
+  // crypto.subtle is blocked — prefixed "fnv:" so values never collide with
+  // SHA-256 hashes stored by secure-context uploads.
+  async hashFile(file) {
+    const buffer = await file.arrayBuffer()
+    if (crypto?.subtle) {
+      const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+      return Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+    }
+    // Pure-JS FNV-1a 64-bit (two 32-bit halves)
+    const bytes = new Uint8Array(buffer)
+    let h1 = 0x811c9dc5 >>> 0
+    let h2 = 0xc4ceb9fe >>> 0
+    for (let i = 0; i < bytes.length; i++) {
+      h1 = Math.imul(h1 ^ bytes[i], 0x01000193) >>> 0
+      h2 = Math.imul(h2 ^ bytes[i], 0x811c9dc5) >>> 0
+    }
+    return 'fnv:' + h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0')
+  },
+
+  // Returns the existing observation row if this hash already exists for the
+  // property, otherwise null. Callers use this to warn before re-uploading.
+  async findDuplicateObservation(propertyId, imageHash) {
+    const { data, error } = await supabase
+      .from('observations')
+      .select('id, observed_at, image_url')
+      .eq('property_id', propertyId)
+      .eq('image_hash', imageHash)
+      .maybeSingle()
+    if (error) throw error
+    return data   // null = no duplicate
+  },
+
   async uploadObservationImage(file) {
     const ext  = file.name.split('.').pop().toLowerCase()
     const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
@@ -182,11 +221,27 @@ export const api = {
     if (error) throw error
   },
 
+  async updateAreaBoundary(id, boundary) {
+    const { error } = await supabase.rpc('update_area_boundary', {
+      p_id:       id,
+      p_boundary: boundary,
+    })
+    if (error) throw error
+  },
+
   async updateProperty(id, { name, owner }) {
     const { error } = await supabase
       .from('properties')
       .update({ name, owner: owner || null })
       .eq('id', id)
+    if (error) throw error
+  },
+
+  async updatePropertyBoundary(id, boundary) {
+    const { error } = await supabase.rpc('update_property_boundary', {
+      p_id:       id,
+      p_boundary: boundary,
+    })
     if (error) throw error
   },
 
