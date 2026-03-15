@@ -505,10 +505,17 @@ export default function Map({
         // Device markers are DOM elements — toggle display directly
         const layerOn = layerVisibility[layer.id] !== false
         deviceVisRef.current = layerOn
-        const showDots = layerOn && deviceModeRef.current === 'individual'
+        const hideDots = !layerOn || deviceModeRef.current === 'hidden'
         const showHeat = layerOn && deviceModeRef.current === 'heatmap'
         Object.values(deviceMarkersRef.current).forEach((m) => {
-          m.getElement().style.display = showDots ? '' : 'none'
+          const el = m.getElement()
+          if (hideDots) {
+            el.style.display = 'none'
+          } else {
+            el.style.display = ''
+            el.style.opacity = deviceModeRef.current === 'heatmap' ? '0.25' : '1'
+            el.style.border = deviceModeRef.current === 'heatmap' ? 'none' : ''
+          }
         })
         if (map.current.getLayer('devices-heat'))
           map.current.setLayoutProperty('devices-heat', 'visibility', showHeat ? 'visible' : 'none')
@@ -522,8 +529,8 @@ export default function Map({
         : [`${layer.id}-line`]
       ids.forEach((lid) => {
         if (!map.current.getLayer(lid)) return
-        // Keep circles hidden when not in individual mode
-        const effectiveVis = (lid === 'observations-circle' && obsModeRef.current !== 'individual') ? 'none' : vis
+        // Keep circles visible in heatmap mode (ghost dots), hidden only when mode is 'hidden'
+        const effectiveVis = (lid === 'observations-circle' && obsModeRef.current === 'hidden') ? 'none' : vis
         map.current.setLayoutProperty(lid, 'visibility', effectiveVis)
       })
     })
@@ -609,42 +616,71 @@ export default function Map({
     if (!ready) return
     const layer = 'observations-circle'
     if (!map.current.getLayer(layer)) return
+    const isHeat = obsModeRef.current === 'heatmap'
     if (selectedObsId) {
       map.current.setPaintProperty(layer, 'circle-radius',
-        ['case', ['==', ['get', 'id'], selectedObsId], 10, 6])
+        ['case', ['==', ['get', 'id'], selectedObsId], 10, isHeat ? 4 : 6])
       map.current.setPaintProperty(layer, 'circle-color',
         ['case', ['==', ['get', 'id'], selectedObsId], '#fff', C.burntOrange])
       map.current.setPaintProperty(layer, 'circle-stroke-color',
         ['case', ['==', ['get', 'id'], selectedObsId], C.burntOrange, '#fff'])
       map.current.setPaintProperty(layer, 'circle-stroke-width',
-        ['case', ['==', ['get', 'id'], selectedObsId], 3, 1.5])
+        ['case', ['==', ['get', 'id'], selectedObsId], 3, isHeat ? 0 : 1.5])
+      map.current.setPaintProperty(layer, 'circle-opacity',
+        ['case', ['==', ['get', 'id'], selectedObsId], 1, isHeat ? 0.15 : 1])
+      map.current.setPaintProperty(layer, 'circle-stroke-opacity',
+        ['case', ['==', ['get', 'id'], selectedObsId], 1, isHeat ? 0 : 1])
     } else {
-      map.current.setPaintProperty(layer, 'circle-radius', 6)
+      map.current.setPaintProperty(layer, 'circle-radius', isHeat ? 4 : 6)
       map.current.setPaintProperty(layer, 'circle-color', C.burntOrange)
       map.current.setPaintProperty(layer, 'circle-stroke-color', '#fff')
-      map.current.setPaintProperty(layer, 'circle-stroke-width', 1.5)
+      map.current.setPaintProperty(layer, 'circle-stroke-width', isHeat ? 0 : 1.5)
+      map.current.setPaintProperty(layer, 'circle-opacity', isHeat ? 0.15 : 1)
+      map.current.setPaintProperty(layer, 'circle-stroke-opacity', isHeat ? 0 : 1)
     }
   }, [ready, selectedObsId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Observation display mode: individual | heatmap | hidden ──
+  // In heatmap mode, dots stay visible but ghost-like (no stroke, low opacity)
+  // so they remain clickable without crowding the heatmap.
   useEffect(() => {
     if (!ready) return
     obsModeRef.current = obsMode
     if (map.current.getLayer('observations-heat'))
       map.current.setLayoutProperty('observations-heat', 'visibility', obsMode === 'heatmap' ? 'visible' : 'none')
-    if (map.current.getLayer('observations-circle'))
-      map.current.setLayoutProperty('observations-circle', 'visibility', obsMode === 'individual' ? 'visible' : 'none')
+    if (map.current.getLayer('observations-circle')) {
+      map.current.setLayoutProperty('observations-circle', 'visibility', obsMode === 'hidden' ? 'none' : 'visible')
+      if (obsMode === 'heatmap') {
+        map.current.setPaintProperty('observations-circle', 'circle-radius', 4)
+        map.current.setPaintProperty('observations-circle', 'circle-opacity', 0.15)
+        map.current.setPaintProperty('observations-circle', 'circle-stroke-width', 0)
+        map.current.setPaintProperty('observations-circle', 'circle-stroke-opacity', 0)
+      } else {
+        map.current.setPaintProperty('observations-circle', 'circle-radius', 6)
+        map.current.setPaintProperty('observations-circle', 'circle-opacity', 1)
+        map.current.setPaintProperty('observations-circle', 'circle-stroke-width', 1.5)
+        map.current.setPaintProperty('observations-circle', 'circle-stroke-opacity', 1)
+      }
+    }
   }, [ready, obsMode])
 
   // ── Device display mode: individual | heatmap | hidden ────────
+  // In heatmap mode, device dots stay visible but ghost-like so they remain clickable.
   useEffect(() => {
     if (!ready) return
     deviceModeRef.current = deviceMode
     const layerOn = deviceVisRef.current
-    const showDots = layerOn && deviceMode === 'individual'
     const showHeat = layerOn && deviceMode === 'heatmap'
+    const hideDots = !layerOn || deviceMode === 'hidden'
     Object.values(deviceMarkersRef.current).forEach((m) => {
-      m.getElement().style.display = showDots ? '' : 'none'
+      const el = m.getElement()
+      if (hideDots) {
+        el.style.display = 'none'
+      } else {
+        el.style.display = ''
+        el.style.opacity = deviceMode === 'heatmap' ? '0.25' : '1'
+        el.style.border = deviceMode === 'heatmap' ? 'none' : ''
+      }
     })
     if (map.current.getLayer('devices-heat'))
       map.current.setLayoutProperty('devices-heat', 'visibility', showHeat ? 'visible' : 'none')
@@ -767,8 +803,15 @@ export default function Map({
           marker.setLngLat([d.lng, d.lat])
           marker.getElement().className = `device-dot ${status}`
         }
-        deviceMarkersRef.current[d.id].getElement().style.display =
-          (visible && deviceModeRef.current === 'individual') ? '' : 'none'
+        const el = deviceMarkersRef.current[d.id].getElement()
+        const hide = !visible || deviceModeRef.current === 'hidden'
+        if (hide) {
+          el.style.display = 'none'
+        } else {
+          el.style.display = ''
+          el.style.opacity = deviceModeRef.current === 'heatmap' ? '0.25' : '1'
+          el.style.border = deviceModeRef.current === 'heatmap' ? 'none' : ''
+        }
       })
 
     // Remove markers for devices no longer in the list
