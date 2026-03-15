@@ -82,8 +82,11 @@ export default function App() {
     [loadedData.observations, obsFilter]
   )
 
-  // ── Heatmap mode ──────────────────────────────────────────────
-  const [heatmap, setHeatmap] = useState(false)
+  // ── Observation / device display modes ───────────────────────
+  const [obsMode,    setObsMode]    = useState('individual') // individual | heatmap | hidden
+  const [deviceMode, setDeviceMode] = useState('individual') // individual | heatmap | hidden
+  const cycleObs    = () => setObsMode((m)    => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
+  const cycleDevice = () => setDeviceMode((m) => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
 
   // ── Tag types ─────────────────────────────────────────────────
   const [tagTypes, setTagTypes] = useState([])
@@ -215,7 +218,8 @@ export default function App() {
         onDataLoaded={handleDataLoaded}
         onFeatureClick={handleFeatureClick}
         selectedObsId={selectedFeature?.featureType === 'observation' ? selectedFeature.data?.id : null}
-        heatmap={heatmap}
+        obsMode={obsMode}
+        deviceMode={deviceMode}
       />
 
       {/* ── Top-left: app menu ── */}
@@ -238,11 +242,21 @@ export default function App() {
           isOpen={openPanel === 'layers'}
           onOpen={() => handlePanelOpen('layers')}
         />
-        <DevicesPanel
-          isOpen={openPanel === 'devices'}
-          onOpen={() => handlePanelOpen('devices')}
-        />
-        {/* OBSERVE + standalone heatmap toggle side by side */}
+        {/* DEVICES + display mode toggle side by side */}
+        <div style={observeRowStyle}>
+          <DevicesPanel
+            isOpen={openPanel === 'devices'}
+            onOpen={() => handlePanelOpen('devices')}
+          />
+          <button
+            style={{ ...heatBtnStyle, ...(deviceMode !== 'hidden' ? devBtnOnStyle : dimBtnStyle) }}
+            onClick={cycleDevice}
+            title={deviceMode === 'individual' ? 'Switch to device heatmap' : deviceMode === 'heatmap' ? 'Hide devices' : 'Show devices'}
+          >
+            {deviceMode === 'individual' ? '●' : deviceMode === 'heatmap' ? '≋' : '○'}
+          </button>
+        </div>
+        {/* OBSERVE + display mode toggle side by side */}
         <div style={observeRowStyle}>
           <ObservationFilterPanel
             observations={loadedData.observations}
@@ -256,11 +270,11 @@ export default function App() {
             onOpen={() => handlePanelOpen('observe')}
           />
           <button
-            style={{ ...heatBtnStyle, ...(heatmap ? heatBtnOnStyle : {}) }}
-            onClick={() => setHeatmap((h) => !h)}
-            title={heatmap ? 'Switch to point view' : 'Switch to heat map'}
+            style={{ ...heatBtnStyle, ...(obsMode !== 'hidden' ? heatBtnOnStyle : dimBtnStyle) }}
+            onClick={cycleObs}
+            title={obsMode === 'individual' ? 'Switch to heatmap' : obsMode === 'heatmap' ? 'Hide observations' : 'Show observations'}
           >
-            {heatmap ? '●' : '≋'}
+            {obsMode === 'individual' ? '●' : obsMode === 'heatmap' ? '≋' : '○'}
           </button>
         </div>
       </div>
@@ -396,3 +410,9 @@ const heatBtnOnStyle = {
   border: `1px solid ${C.burntOrange}55`,
   color: C.burntOrange,
 }
+const devBtnOnStyle = {
+  background: C.pistachioGreen + '18',
+  border: `1px solid ${C.pistachioGreen}55`,
+  color: C.pistachioGreen,
+}
+const dimBtnStyle = { opacity: 0.4 }
