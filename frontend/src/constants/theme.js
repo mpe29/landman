@@ -17,6 +17,27 @@ export const C = {
   panelBg:        '#F3F1E8',  // Panels and cards
 }
 
+// ── Shared panel shell styles ──────────────────────────────────────
+// Import these in every bottom-left panel component so they stay in sync.
+// See docs/UI_PATTERNS.md for the full usage pattern.
+export const PANEL_SHELL = {
+  background:    C.panelBg,
+  backdropFilter: 'blur(10px)',
+  border:        `1px solid rgba(78,91,60,0.14)`,
+  borderRadius:  10,
+  boxShadow:     '0 2px 20px rgba(47,47,47,0.10)',
+  overflow:      'hidden',
+}
+
+export const PANEL_HEADER = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  width: '100%', background: 'transparent', border: 'none',
+  padding: '9px 14px', cursor: 'pointer',
+}
+
+export const PANEL_TITLE   = { color: 'rgba(47,47,47,0.32)', fontSize: 10, fontWeight: 700, letterSpacing: '0.12em' }
+export const PANEL_CHEVRON = { color: 'rgba(47,47,47,0.32)', fontSize: 11 }
+
 // ── Semantic UI tokens ─────────────────────────────────────────────
 export const T = {
   // Surfaces

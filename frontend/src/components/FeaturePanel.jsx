@@ -18,6 +18,141 @@ function bearingToCardinal(deg) {
   return dirs[Math.round(deg / 45) % 8]
 }
 
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000
+const STATUS_COLOR = { fresh: '#22c55e', stale: '#f59e0b', inactive: '#9ca3af' }
+const STATUS_LABEL = { fresh: 'Live', stale: 'Stale', inactive: 'Unregistered' }
+
+function timeAgo(ts) {
+  const diff = Date.now() - new Date(ts).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 2)  return 'Just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24)  return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
+
+function DeviceFeaturePanel({ data, onClose }) {
+  const [readings, setReadings] = useState([])
+  const [loading,  setLoading]  = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    api.getDeviceReadings(data.id, 20)
+      .then(setReadings)
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [data.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const age    = data.last_seen_at ? Date.now() - new Date(data.last_seen_at).getTime() : Infinity
+  const status = data.status ?? (!data.active ? 'inactive' : age < TWO_HOURS_MS ? 'fresh' : 'stale')
+
+  return (
+    <div style={styles.panel}>
+      {/* Header */}
+      <div style={{ ...styles.header, borderLeftColor: STATUS_COLOR[status] }}>
+        <div>
+          <span style={{ ...styles.badge, color: STATUS_COLOR[status], borderColor: `${STATUS_COLOR[status]}35` }}>
+            {STATUS_LABEL[status]}
+          </span>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginTop: 4 }}>
+            {data.device_type_icon ? `${data.device_type_icon} ` : ''}{data.name}
+          </div>
+          {data.device_type_name && (
+            <span style={styles.meta}>{data.device_type_name}</span>
+          )}
+        </div>
+        <button style={styles.closeBtn} onClick={onClose}>✕</button>
+      </div>
+
+      {/* Status row */}
+      <div style={dv.statusRow}>
+        {data.battery_pct != null && (
+          <span style={dv.pill}>🔋 {data.battery_pct}%</span>
+        )}
+        {data.last_seen_at && (
+          <span style={dv.pill}>🕐 {timeAgo(data.last_seen_at)}</span>
+        )}
+        {data.lat != null && (
+          <span style={dv.pill}>📍 {Number(data.lat).toFixed(4)}, {Number(data.lng).toFixed(4)}</span>
+        )}
+        {data.area_name && (
+          <span style={dv.pill}>📌 {data.area_name}</span>
+        )}
+      </div>
+
+      {/* EUI */}
+      <div style={dv.eui}>{data.dev_eui?.toUpperCase()}</div>
+
+      {/* Readings log */}
+      <div style={dv.logSection}>
+        <div style={dv.logTitle}>Recent Readings</div>
+        {loading && <div style={dv.muted}>Loading…</div>}
+        {!loading && readings.length === 0 && <div style={dv.muted}>No readings yet</div>}
+        <div style={dv.logScroll}>
+          {readings.map((r) => {
+            const hasGps = r.lat != null && r.lng != null
+            const t = new Date(r.received_at)
+            const timeStr = t.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' })
+              + ' ' + t.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })
+            return (
+              <div key={r.id} style={dv.logRow}>
+                <div style={dv.logTime}>{timeStr}</div>
+                <div style={dv.logFields}>
+                  {r.battery_pct != null && <span>🔋{r.battery_pct}%</span>}
+                  {r.rssi        != null && <span>{r.rssi} dBm</span>}
+                  {r.snr         != null && <span>SNR {r.snr}</span>}
+                  {r.extra?.temperature_c != null && <span>{r.extra.temperature_c}°C</span>}
+                  <span style={{ color: hasGps ? '#22c55e' : T.textMuted }}>
+                    {hasGps
+                      ? `GPS ${r.lat.toFixed(4)}, ${r.lng.toFixed(4)}`
+                      : 'No GPS fix'}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const dv = {
+  statusRow: {
+    display: 'flex', flexWrap: 'wrap', gap: 5,
+    padding: '8px 16px 0',
+    flexShrink: 0,
+  },
+  pill: {
+    fontSize: 11, color: T.textMuted,
+    background: T.surfaceBorder,
+    borderRadius: 10, padding: '3px 8px',
+    whiteSpace: 'nowrap',
+  },
+  eui: {
+    fontFamily: 'monospace', fontSize: 10, color: T.textFaint,
+    letterSpacing: '0.06em', padding: '6px 16px 4px',
+    flexShrink: 0,
+  },
+  logSection: {
+    flex: 1, overflowY: 'hidden',
+    display: 'flex', flexDirection: 'column',
+    padding: '8px 16px 12px',
+    borderTop: `1px solid ${T.surfaceBorder}`,
+  },
+  logTitle: {
+    fontSize: 10, fontWeight: 700, color: T.textMuted,
+    textTransform: 'uppercase', letterSpacing: '0.07em',
+    marginBottom: 6, flexShrink: 0,
+  },
+  logScroll: { flex: 1, overflowY: 'auto' },
+  logRow: { padding: '5px 0', borderBottom: `1px solid ${T.surfaceBorder}` },
+  logTime: { fontSize: 10, color: T.textMuted, marginBottom: 2 },
+  logFields: { display: 'flex', flexWrap: 'wrap', gap: '4px 10px', fontSize: 11, color: T.text },
+  muted: { fontSize: 12, color: T.textMuted },
+}
+
 export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, camps, propertyId, tagTypes = [] }) {
   const { featureType, data } = feature
 
@@ -145,6 +280,11 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, cam
       setDeleting(false)
       setConfirmDelete(false)
     }
+  }
+
+  // Device features get their own dedicated panel — all hooks above still run
+  if (featureType === 'device') {
+    return <DeviceFeaturePanel data={data} onClose={onClose} />
   }
 
   return (

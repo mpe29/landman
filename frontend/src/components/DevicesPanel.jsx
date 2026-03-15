@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { T } from '../constants/theme'
+import { T, PANEL_SHELL, PANEL_HEADER, PANEL_TITLE, PANEL_CHEVRON } from '../constants/theme'
 import { api } from '../api'
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000
@@ -44,7 +44,7 @@ export default function DevicesPanel({ isOpen, onOpen }) {
     if (!selected) return
     setLoadingReadings(true)
     setBackfillMsg(null)
-    api.getDeviceReadings(selected.id, 25)
+    api.getDeviceReadings(selected.id, 1)
       .then(setReadings)
       .catch(console.error)
       .finally(() => setLoadingReadings(false))
@@ -92,7 +92,7 @@ export default function DevicesPanel({ isOpen, onOpen }) {
         setForm({ name: refreshed.name, notes: refreshed.notes || '', deviceTypeId: refreshed.device_type_id || '' })
       }
       // Reload readings so backfilled lat/lng shows
-      api.getDeviceReadings(selected.id, 25).then(setReadings).catch(console.error)
+      api.getDeviceReadings(selected.id, 1).then(setReadings).catch(console.error)
     } catch (err) {
       alert('Save failed: ' + err.message)
     } finally {
@@ -105,19 +105,16 @@ export default function DevicesPanel({ isOpen, onOpen }) {
   const currentList  = tab === 'registered' ? registered : unregistered
 
   return (
-    <div>
+    <div style={PANEL_SHELL}>
       {/* ── Trigger button ── */}
-      <button
-        onClick={onOpen}
-        title="Devices"
-        style={{ ...s.btn, ...(isOpen ? s.btnActive : {}) }}
-      >
-        📡
+      <button onClick={onOpen} title="Devices" style={PANEL_HEADER}>
+        <span style={PANEL_TITLE}>DEVICES</span>
+        <span style={PANEL_CHEVRON}>{isOpen ? '▾' : '▸'}</span>
       </button>
 
       {/* ── Panel ── */}
       {isOpen && (
-        <div style={s.panel}>
+        <div style={s.body}>
           {selected ? (
             /* ── Detail view ─────────────────────────────── */
             <>
@@ -176,7 +173,7 @@ export default function DevicesPanel({ isOpen, onOpen }) {
 
               {/* Readings log */}
               <div style={s.logSection}>
-                <div style={s.logTitle}>Recent Readings</div>
+                <div style={s.logTitle}>Latest Reading</div>
                 {loadingReadings && <div style={s.muted}>Loading…</div>}
                 {!loadingReadings && readings.length === 0 && (
                   <div style={s.muted}>No readings yet</div>
@@ -268,23 +265,9 @@ export default function DevicesPanel({ isOpen, onOpen }) {
 }
 
 const s = {
-  btn: {
-    height: 30, padding: '0 10px',
-    display: 'flex', alignItems: 'center', gap: 6,
-    background: 'rgba(243,241,232,0.92)', backdropFilter: 'blur(10px)',
-    border: '1px solid rgba(180,170,150,0.35)',
-    borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.12)',
-    cursor: 'pointer', fontSize: 14, color: T.textMuted,
-    fontFamily: 'inherit', transition: 'all 0.15s', whiteSpace: 'nowrap',
-  },
-  btnActive: { background: 'rgba(243,241,232,0.98)', borderColor: 'rgba(180,170,150,0.6)' },
-  panel: {
-    position: 'absolute', bottom: 36, left: 0,
-    width: 290, maxHeight: 520, overflowY: 'auto',
-    background: 'rgba(243,241,232,0.97)', backdropFilter: 'blur(12px)',
-    border: '1px solid rgba(180,170,150,0.4)',
-    borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-    fontFamily: T.font,
+  body: {
+    maxHeight: 480, overflowY: 'auto',
+    borderTop: `1px solid ${T.surfaceBorder}`,
   },
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',

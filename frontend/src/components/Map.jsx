@@ -25,7 +25,7 @@ async function loadAllData() {
     api.getAreas(),
     api.getPointAssets(),
     api.getObservations(),
-    api.getLivestockCampCounts(),
+    api.getLivestockCampCounts().catch(() => []),
     api.getDevicePositions(),
   ])
   return {
@@ -127,6 +127,41 @@ function injectGpsCss() {
   document.head.appendChild(style)
 }
 
+// Inject device dot CSS once
+let deviceCssInjected = false
+function injectDeviceCss() {
+  if (deviceCssInjected) return
+  deviceCssInjected = true
+  const style = document.createElement('style')
+  style.textContent = `
+    .device-dot {
+      width: 16px; height: 16px;
+      border: 2.5px solid #fff;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    .device-dot.fresh {
+      background: #22c55e;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+      animation: device-pulse 2s ease-out infinite;
+    }
+    .device-dot.stale {
+      background: #f59e0b;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+    }
+    .device-dot.inactive {
+      background: #9ca3af;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    }
+    @keyframes device-pulse {
+      0%   { box-shadow: 0 0 0 0   rgba(34,197,94,0.55), 0 1px 4px rgba(0,0,0,0.35); }
+      70%  { box-shadow: 0 0 0 14px rgba(34,197,94,0),   0 1px 4px rgba(0,0,0,0.35); }
+      100% { box-shadow: 0 0 0 0   rgba(34,197,94,0),    0 1px 4px rgba(0,0,0,0.35); }
+    }
+  `
+  document.head.appendChild(style)
+}
+
 export default function Map({
   mode,
   reloadKey,
@@ -149,6 +184,9 @@ export default function Map({
   const gpsWatchRef      = useRef(null)
   const gpsMarkerRef     = useRef(null)
   const gpsFlyDoneRef    = useRef(false)
+  // Device HTML markers — keyed by device id
+  const deviceMarkersRef = useRef({})
+  const deviceVisRef     = useRef(true)         // current live_devices layer visibility
   const [ready, setReady]       = useState(false)
   const [gpsActive, setGpsActive] = useState(false)
 
@@ -250,48 +288,10 @@ export default function Map({
               'text-halo-width': 2,
             },
           })
-        } else if (layer.type === 'device') {
-          // Circle background — color encodes staleness
-          const deviceColorExpr = [
-            'match', ['get', 'status'],
-            'fresh',    '#22c55e',  // green  — seen within 2h
-            'stale',    '#f59e0b',  // amber  — seen > 2h ago
-            /* inactive */ '#9ca3af',  // grey
-          ]
-          map.current.addLayer({
-            id: `${layer.id}-circle`, type: 'circle', source: layer.id,
-            layout: { visibility: layer.defaultVisible ? 'visible' : 'none' },
-            paint: {
-              'circle-radius':       14,
-              'circle-color':        deviceColorExpr,
-              'circle-opacity':      0.25,
-              'circle-stroke-color': deviceColorExpr,
-              'circle-stroke-width': 2,
-            },
-          })
-          // Emoji icon on top
-          map.current.addLayer({
-            id: `${layer.id}-symbol`, type: 'symbol', source: layer.id,
-            layout: {
-              visibility:              layer.defaultVisible ? 'visible' : 'none',
-              'text-field':            ['get', 'device_type_icon'],
-              'text-size':             16,
-              'text-anchor':           'center',
-              'text-allow-overlap':    true,
-              'text-ignore-placement': true,
-            },
-            paint: {
-              'text-color':      '#111827',
-              'text-halo-color': '#ffffff',
-              'text-halo-width': 1,
-            },
-          })
-          map.current.on('click', `${layer.id}-circle`, (e) => {
-            if (touchHandled) { touchHandled = false; return }
-            onFeatureClickRef.current?.({ featureType: layer.featureType, data: e.features[0].properties })
-          })
-          map.current.on('mouseenter', `${layer.id}-circle`, () => { map.current.getCanvas().style.cursor = 'pointer' })
-          map.current.on('mouseleave', `${layer.id}-circle`, () => { map.current.getCanvas().style.cursor = '' })
+        } else if (layer.type === 'html_marker') {
+          // Device positions rendered as HTML markers (see updateDeviceMarkers).
+          // No Mapbox layer needed — skip. Source is still registered above
+          // so setData calls are harmless (source exists, no layers consume it).
         }
       })
 
@@ -339,7 +339,7 @@ export default function Map({
       // during map panning. touchHandled prevents the subsequent Mapbox
       // synthesised click event from firing a second dispatch.
       const polyFillIds  = ACTIVE_LAYERS.filter((l) => l.type === 'polygon').map((l) => `${l.id}-fill`)
-      const pointCircIds = ACTIVE_LAYERS.filter((l) => (l.type === 'point' || l.type === 'device') && l.id !== 'observations').map((l) => `${l.id}-circle`)
+      const pointCircIds = ACTIVE_LAYERS.filter((l) => l.type === 'point' && l.id !== 'observations').map((l) => `${l.id}-circle`)
 
       const canvas = map.current.getCanvas()
       let touchStartX = 0, touchStartY = 0
@@ -421,12 +421,20 @@ export default function Map({
   useEffect(() => {
     if (!ready || !layerVisibility) return
     ACTIVE_LAYERS.forEach((layer) => {
+      if (layer.type === 'html_marker') {
+        // Device markers are DOM elements — toggle display directly
+        const visible = layerVisibility[layer.id] !== false
+        deviceVisRef.current = visible
+        Object.values(deviceMarkersRef.current).forEach((m) => {
+          m.getElement().style.display = visible ? '' : 'none'
+        })
+        return
+      }
       const vis = layerVisibility[layer.id] !== false ? 'visible' : 'none'
       const ids =
         layer.type === 'polygon' ? [`${layer.id}-fill`, `${layer.id}-outline`]
         : layer.type === 'point'   ? [`${layer.id}-circle`]
         : layer.type === 'symbol'  ? [`${layer.id}-symbol`]
-        : layer.type === 'device'  ? [`${layer.id}-circle`, `${layer.id}-symbol`]
         : [`${layer.id}-line`]
       ids.forEach((lid) => {
         if (!map.current.getLayer(lid)) return
@@ -462,7 +470,7 @@ export default function Map({
       map.current.getSource('camps')?.setData(toFC(buckets.camps))
       map.current.getSource('point_assets')?.setData(toFC(buckets.point_assets, 'geom'))
       map.current.getSource('livestock_counts')?.setData(toFC(buckets.livestock_counts, 'geom'))
-      map.current.getSource('live_devices')?.setData(toDeviceFC(buckets.live_devices))
+      updateDeviceMarkers(buckets.live_devices, deviceVisRef.current)
 
       // Apply observation filter before feeding to map source
       lastObsRef.current = buckets.observations
@@ -541,7 +549,7 @@ export default function Map({
       .channel('sensor_readings_live')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sensor_readings' }, () => {
         api.getDevicePositions().then((devices) => {
-          map.current.getSource('live_devices')?.setData(toDeviceFC(devices))
+          updateDeviceMarkers(devices, deviceVisRef.current)
         }).catch(console.error)
       })
       .subscribe()
@@ -619,6 +627,47 @@ export default function Map({
 
   // Clean up GPS watch on unmount
   useEffect(() => () => stopGps(), []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Device HTML markers ───────────────────────────────────────
+  const updateDeviceMarkers = (devices, visible) => {
+    if (!map.current) return
+    deviceVisRef.current = visible
+    const now    = Date.now()
+    const seenIds = new Set()
+
+    devices
+      .filter((d) => d.lat != null && d.lng != null)
+      .forEach((d) => {
+        seenIds.add(d.id)
+        const age    = d.last_seen_at ? now - new Date(d.last_seen_at).getTime() : Infinity
+        const status = !d.active ? 'inactive' : age < TWO_HOURS_MS ? 'fresh' : 'stale'
+
+        if (!deviceMarkersRef.current[d.id]) {
+          injectDeviceCss()
+          const el = document.createElement('div')
+          el.className = `device-dot ${status}`
+          el.addEventListener('click', () => {
+            onFeatureClickRef.current?.({ featureType: 'device', data: { ...d, status } })
+          })
+          deviceMarkersRef.current[d.id] = new mapboxgl.Marker({ element: el, anchor: 'center' })
+            .setLngLat([d.lng, d.lat])
+            .addTo(map.current)
+        } else {
+          const marker = deviceMarkersRef.current[d.id]
+          marker.setLngLat([d.lng, d.lat])
+          marker.getElement().className = `device-dot ${status}`
+        }
+        deviceMarkersRef.current[d.id].getElement().style.display = visible ? '' : 'none'
+      })
+
+    // Remove markers for devices no longer in the list
+    Object.keys(deviceMarkersRef.current).forEach((id) => {
+      if (!seenIds.has(id)) {
+        deviceMarkersRef.current[id].remove()
+        delete deviceMarkersRef.current[id]
+      }
+    })
+  }
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -714,7 +763,7 @@ const hc = {
   },
   btnGpsOn: {
     background: '#3b82f618',
-    borderColor: '#3b82f655',
+    border: '1px solid #3b82f655',
     color: '#3b82f6',
   },
 }

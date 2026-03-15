@@ -129,7 +129,7 @@ export const LAYERS = [
     id:             'live_devices',
     label:          'Live Devices',
     group:          'field_data',
-    type:           'device',        // special: circle background + emoji symbol on top
+    type:           'html_marker',   // rendered as pulsing CSS dot markers, not Mapbox layers
     featureType:    'device',
     defaultVisible: true,
   },

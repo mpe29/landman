@@ -98,7 +98,7 @@ function Section({ label, active, onToggle, children }) {
 }
 
 function ItemBtn({ active, color, onClick, children }) {
-  const over = active && color ? { borderColor: color, color, background: `${color}1a` } : {}
+  const over = active && color ? { border: `1px solid ${color}`, color, background: `${color}1a` } : {}
   return (
     <button style={{ ...s.item, ...over }} onClick={onClick}>
       {children}

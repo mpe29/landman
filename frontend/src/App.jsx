@@ -310,6 +310,6 @@ const heatBtnStyle = {
 }
 const heatBtnOnStyle = {
   background: C.burntOrange + '18',
-  borderColor: C.burntOrange + '55',
+  border: `1px solid ${C.burntOrange}55`,
   color: C.burntOrange,
 }
