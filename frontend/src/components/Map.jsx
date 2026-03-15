@@ -229,6 +229,21 @@ export default function Map({
         touchHandledTimer = setTimeout(() => { touchHandled = false }, 600)
       }
 
+      // Returns the nearest visible device's data if within 22px of canvas point (x, y),
+      // otherwise null. Used to give devices top selection priority over all Mapbox layers.
+      const nearestDevice = (x, y) => {
+        const cr = map.current.getCanvas().getBoundingClientRect()
+        for (const [id, marker] of Object.entries(deviceMarkersRef.current)) {
+          const el = marker.getElement()
+          if (el.style.display === 'none') continue
+          const mr = el.getBoundingClientRect()
+          const mx = mr.left + mr.width  / 2 - cr.left
+          const my = mr.top  + mr.height / 2 - cr.top
+          if (Math.hypot(x - mx, y - my) <= 22) return deviceDataRef.current[id]
+        }
+        return null
+      }
+
       ACTIVE_LAYERS.forEach((layer) => {
         map.current.addSource(layer.id, {
           type: 'geojson',
@@ -248,6 +263,8 @@ export default function Map({
           })
           map.current.on('click', `${layer.id}-fill`, (e) => {
             if (touchHandled) { touchHandled = false; return }
+            const device = nearestDevice(e.point.x, e.point.y)
+            if (device) { onFeatureClickRef.current?.({ featureType: 'device', data: device }); return }
             onFeatureClickRef.current?.({
               featureType: layer.featureType,
               data: { ...e.features[0].properties, _geometry: e.features[0].geometry },
@@ -269,6 +286,8 @@ export default function Map({
           })
           map.current.on('click', `${layer.id}-circle`, (e) => {
             if (touchHandled) { touchHandled = false; return }
+            const device = nearestDevice(e.point.x, e.point.y)
+            if (device) { onFeatureClickRef.current?.({ featureType: 'device', data: device }); return }
             onFeatureClickRef.current?.({ featureType: layer.featureType, data: e.features[0].properties })
           })
           map.current.on('mouseenter', `${layer.id}-circle`, () => { map.current.getCanvas().style.cursor = 'pointer' })
@@ -360,30 +379,6 @@ export default function Map({
           touchStartY = e.touches[0].clientY
         }
       }, { passive: true })
-
-      // Desktop: raw canvas click fires before Mapbox layer handlers.
-      // Check device marker proximity first so devices always win over
-      // observations or polygons when within 44px of a device dot.
-      canvas.addEventListener('click', (e) => {
-        if (modeRef.current !== 'view') return  // draw/edit modes handle their own events
-        if (touchHandled) return  // mobile touch already dispatched
-        const rect = canvas.getBoundingClientRect()
-        const cx = e.clientX - rect.left
-        const cy = e.clientY - rect.top
-        for (const [id, marker] of Object.entries(deviceMarkersRef.current)) {
-          const el = marker.getElement()
-          if (el.style.display === 'none') continue
-          const mRect = el.getBoundingClientRect()
-          const mx = mRect.left + mRect.width / 2 - rect.left
-          const my = mRect.top + mRect.height / 2 - rect.top
-          if (Math.hypot(cx - mx, cy - my) <= 22) {
-            markTouchHandled()
-            const data = deviceDataRef.current[id]
-            if (data) onFeatureClickRef.current?.({ featureType: 'device', data })
-            return
-          }
-        }
-      })
 
       canvas.addEventListener('touchend', (e) => {
         if (modeRef.current !== 'view') return  // draw/edit modes handle their own events
