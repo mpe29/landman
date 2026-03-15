@@ -9,6 +9,7 @@ import DrawPointModal from './components/DrawPointModal'
 import ObservationModal from './components/ObservationModal'
 import ObservationFilterPanel from './components/ObservationFilterPanel'
 import FeaturePanel from './components/FeaturePanel'
+import DevicesPanel from './components/DevicesPanel'
 import { api } from './api'
 import { POINT_DRAW_MODES } from './constants/pointTypes'
 import { DEFAULT_VISIBILITY } from './constants/layers'
@@ -204,6 +205,10 @@ export default function App() {
           onChange={handleLayerToggle}
           isOpen={openPanel === 'layers'}
           onOpen={() => handlePanelOpen('layers')}
+        />
+        <DevicesPanel
+          isOpen={openPanel === 'devices'}
+          onOpen={() => handlePanelOpen('devices')}
         />
         {/* OBSERVE + standalone heatmap toggle side by side */}
         <div style={observeRowStyle}>

@@ -362,6 +362,37 @@ export const api = {
     return data
   },
 
+  async getDevices() {
+    const { data, error } = await supabase
+      .from('devices')
+      .select('*, device_types(name, category, icon)')
+      .order('active', { ascending: false })
+      .order('last_seen_at', { ascending: false, nullsFirst: false })
+    if (error) throw error
+    return data
+  },
+
+  async updateDevice(id, { name, active, notes, areaId }) {
+    const updates = {}
+    if (name     !== undefined) updates.name    = name
+    if (active   !== undefined) updates.active  = active
+    if (notes    !== undefined) updates.notes   = notes || null
+    if (areaId   !== undefined) updates.area_id = areaId || null
+    const { error } = await supabase.from('devices').update(updates).eq('id', id)
+    if (error) throw error
+  },
+
+  async getDeviceReadings(deviceId, limit = 20) {
+    const { data, error } = await supabase
+      .from('sensor_readings')
+      .select('id, received_at, device_time, lat, lng, battery_pct, rssi, snr, extra')
+      .eq('device_id', deviceId)
+      .order('received_at', { ascending: false })
+      .limit(limit)
+    if (error) throw error
+    return data
+  },
+
   // ---------------------------------------------------------------
   // Deletes
   // ---------------------------------------------------------------
