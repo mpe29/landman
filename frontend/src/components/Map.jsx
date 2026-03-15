@@ -333,15 +333,17 @@ export default function Map({
         source: 'observations',
         layout: { visibility: 'none' },
         paint: {
+          // Low intensity + tight radius so hundreds of obs are needed to saturate.
+          // Color stops pushed right: warm colours only appear at genuine high density.
           'heatmap-weight': 1,
-          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 3],
-          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 5, 9, 28],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 0.4, 9, 1.2],
+          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 4, 9, 20],
           'heatmap-color': [
             'interpolate', ['linear'], ['heatmap-density'],
             0,    'rgba(78,91,60,0)',
-            0.25, C.pistachioGreen,
-            0.5,  C.dryGrassYellow,
-            0.75, C.burntOrange,
+            0.15, C.pistachioGreen,
+            0.4,  C.dryGrassYellow,
+            0.7,  C.burntOrange,
             1,    '#b91c1c',
           ],
           'heatmap-opacity': 0.85,
@@ -355,10 +357,11 @@ export default function Map({
         source: 'live_devices',
         layout: { visibility: 'none' },
         paint: {
-          // High weight + intensity so even 1-2 devices produce a visible blob
+          // High weight so even 1-2 devices are visible; tighter radius than obs
+          // so the blob is proportionate to actual device position, not a giant smear.
           'heatmap-weight': 5,
-          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 3, 9, 8],
-          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 20, 9, 60],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 2, 9, 5],
+          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 12, 9, 40],
           'heatmap-color': [
             'interpolate', ['linear'], ['heatmap-density'],
             0,    'rgba(78,91,60,0)',
