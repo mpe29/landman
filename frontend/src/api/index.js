@@ -356,6 +356,14 @@ export const api = {
   // ---------------------------------------------------------------
   // Devices / IoT
   // ---------------------------------------------------------------
+  // Devices / IoT
+  // ---------------------------------------------------------------
+  async getDeviceTypes() {
+    const { data, error } = await supabase.from('device_types').select('*').order('name')
+    if (error) throw error
+    return data
+  },
+
   async getDevicePositions() {
     const { data, error } = await supabase.from('device_positions').select('*')
     if (error) throw error
@@ -372,14 +380,21 @@ export const api = {
     return data
   },
 
-  async updateDevice(id, { name, active, notes, areaId }) {
+  async updateDevice(id, { name, active, notes, areaId, deviceTypeId }) {
     const updates = {}
-    if (name     !== undefined) updates.name    = name
-    if (active   !== undefined) updates.active  = active
-    if (notes    !== undefined) updates.notes   = notes || null
-    if (areaId   !== undefined) updates.area_id = areaId || null
+    if (name         !== undefined) updates.name           = name
+    if (active       !== undefined) updates.active         = active
+    if (notes        !== undefined) updates.notes          = notes || null
+    if (areaId       !== undefined) updates.area_id        = areaId || null
+    if (deviceTypeId !== undefined) updates.device_type_id = deviceTypeId || null
     const { error } = await supabase.from('devices').update(updates).eq('id', id)
     if (error) throw error
+  },
+
+  async backfillDeviceReadings(deviceId) {
+    const { data, error } = await supabase.rpc('backfill_device_readings', { p_device_id: deviceId })
+    if (error) throw error
+    return data // integer — number of rows updated
   },
 
   async getDeviceReadings(deviceId, limit = 20) {

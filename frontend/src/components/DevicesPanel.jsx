@@ -24,22 +24,26 @@ function timeAgo(ts) {
 }
 
 export default function DevicesPanel({ isOpen, onOpen }) {
-  const [devices,  setDevices]  = useState([])
-  const [selected, setSelected] = useState(null)
-  const [readings, setReadings] = useState([])
-  const [tab,      setTab]      = useState('unregistered')
-  const [form,     setForm]     = useState({ name: '', notes: '' })
-  const [saving,   setSaving]   = useState(false)
+  const [devices,      setDevices]      = useState([])
+  const [deviceTypes,  setDeviceTypes]  = useState([])
+  const [selected,     setSelected]     = useState(null)
+  const [readings,     setReadings]     = useState([])
+  const [tab,          setTab]          = useState('unregistered')
+  const [form,         setForm]         = useState({ name: '', notes: '', deviceTypeId: '' })
+  const [saving,       setSaving]       = useState(false)
+  const [backfillMsg,  setBackfillMsg]  = useState(null)
   const [loadingReadings, setLoadingReadings] = useState(false)
 
   useEffect(() => {
     if (!isOpen) return
     api.getDevices().then(setDevices).catch(console.error)
+    api.getDeviceTypes().then(setDeviceTypes).catch(console.error)
   }, [isOpen])
 
   useEffect(() => {
     if (!selected) return
     setLoadingReadings(true)
+    setBackfillMsg(null)
     api.getDeviceReadings(selected.id, 25)
       .then(setReadings)
       .catch(console.error)
@@ -48,24 +52,47 @@ export default function DevicesPanel({ isOpen, onOpen }) {
 
   const handleSelect = (device) => {
     setSelected(device)
-    setForm({ name: device.name, notes: device.notes || '' })
+    setForm({
+      name:         device.name,
+      notes:        device.notes || '',
+      deviceTypeId: device.device_type_id || '',
+    })
     setReadings([])
+    setBackfillMsg(null)
   }
 
-  const handleBack = () => setSelected(null)
+  const handleBack = () => { setSelected(null); setBackfillMsg(null) }
 
   const handleSave = async () => {
     setSaving(true)
+    setBackfillMsg(null)
     try {
+      const wasUnregistered = !selected.active
       await api.updateDevice(selected.id, {
-        name:   form.name.trim() || selected.name,
-        notes:  form.notes,
-        active: true,
+        name:         form.name.trim() || selected.name,
+        notes:        form.notes,
+        active:       true,
+        deviceTypeId: form.deviceTypeId || null,
       })
-      const updated = await api.getDevices()
+
+      // Backfill historic readings now that device type is known
+      if (wasUnregistered || form.deviceTypeId !== (selected.device_type_id || '')) {
+        const count = await api.backfillDeviceReadings(selected.id)
+        setBackfillMsg(count > 0
+          ? `✓ Backfilled ${count} historic reading${count !== 1 ? 's' : ''}`
+          : '✓ Registered — no historic readings to backfill'
+        )
+      }
+
+      const updated  = await api.getDevices()
       setDevices(updated)
       const refreshed = updated.find((d) => d.id === selected.id)
-      if (refreshed) { setSelected(refreshed); setForm({ name: refreshed.name, notes: refreshed.notes || '' }) }
+      if (refreshed) {
+        setSelected(refreshed)
+        setForm({ name: refreshed.name, notes: refreshed.notes || '', deviceTypeId: refreshed.device_type_id || '' })
+      }
+      // Reload readings so backfilled lat/lng shows
+      api.getDeviceReadings(selected.id, 25).then(setReadings).catch(console.error)
     } catch (err) {
       alert('Save failed: ' + err.message)
     } finally {
@@ -109,6 +136,20 @@ export default function DevicesPanel({ isOpen, onOpen }) {
                   </span>
                 </div>
 
+                <label style={s.label}>Device type</label>
+                <select
+                  style={s.input}
+                  value={form.deviceTypeId}
+                  onChange={(e) => setForm((p) => ({ ...p, deviceTypeId: e.target.value }))}
+                >
+                  <option value="">— Select type —</option>
+                  {deviceTypes.map((dt) => (
+                    <option key={dt.id} value={dt.id}>
+                      {dt.icon ? `${dt.icon} ` : ''}{dt.name}
+                    </option>
+                  ))}
+                </select>
+
                 <label style={s.label}>Name</label>
                 <input
                   style={s.input}
@@ -125,22 +166,24 @@ export default function DevicesPanel({ isOpen, onOpen }) {
                 />
 
                 <button onClick={handleSave} disabled={saving} style={s.saveBtn}>
-                  {saving ? 'Saving…' : selected.active ? 'Save' : 'Register device'}
+                  {saving ? 'Saving & backfilling…' : selected.active ? 'Save' : 'Register device'}
                 </button>
+
+                {backfillMsg && (
+                  <div style={s.backfillMsg}>{backfillMsg}</div>
+                )}
               </div>
 
               {/* Readings log */}
               <div style={s.logSection}>
                 <div style={s.logTitle}>Recent Readings</div>
-                {loadingReadings && (
-                  <div style={s.muted}>Loading…</div>
-                )}
+                {loadingReadings && <div style={s.muted}>Loading…</div>}
                 {!loadingReadings && readings.length === 0 && (
                   <div style={s.muted}>No readings yet</div>
                 )}
                 {readings.map((r) => {
                   const hasGps = r.lat != null && r.lng != null
-                  const t = new Date(r.received_at)
+                  const t      = new Date(r.received_at)
                   const timeStr = t.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' })
                     + ' ' + t.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })
                   return (
@@ -152,7 +195,9 @@ export default function DevicesPanel({ isOpen, onOpen }) {
                         {r.snr         != null && <span>SNR {r.snr}</span>}
                         {r.extra?.temperature_c != null && <span>{r.extra.temperature_c}°C</span>}
                         <span style={{ color: hasGps ? '#22c55e' : T.textMuted }}>
-                          {hasGps ? `GPS ${r.lat.toFixed(4)}, ${r.lng.toFixed(4)}` : 'No GPS fix'}
+                          {hasGps
+                            ? `GPS ${r.lat.toFixed(4)}, ${r.lng.toFixed(4)}`
+                            : 'No GPS fix'}
                         </span>
                       </div>
                     </div>
@@ -166,7 +211,7 @@ export default function DevicesPanel({ isOpen, onOpen }) {
               <div style={s.header}>
                 <span style={s.title}>Devices</span>
                 <button
-                  onClick={() => { api.getDevices().then(setDevices).catch(console.error) }}
+                  onClick={() => api.getDevices().then(setDevices).catch(console.error)}
                   style={s.refreshBtn}
                   title="Refresh"
                 >↻</button>
@@ -224,8 +269,7 @@ export default function DevicesPanel({ isOpen, onOpen }) {
 
 const s = {
   btn: {
-    height: 30,
-    padding: '0 10px',
+    height: 30, padding: '0 10px',
     display: 'flex', alignItems: 'center', gap: 6,
     background: 'rgba(243,241,232,0.92)', backdropFilter: 'blur(10px)',
     border: '1px solid rgba(180,170,150,0.35)',
@@ -233,17 +277,10 @@ const s = {
     cursor: 'pointer', fontSize: 14, color: T.textMuted,
     fontFamily: 'inherit', transition: 'all 0.15s', whiteSpace: 'nowrap',
   },
-  btnActive: {
-    background: 'rgba(243,241,232,0.98)',
-    borderColor: 'rgba(180,170,150,0.6)',
-  },
+  btnActive: { background: 'rgba(243,241,232,0.98)', borderColor: 'rgba(180,170,150,0.6)' },
   panel: {
-    position: 'absolute',
-    bottom: 36,
-    left: 0,
-    width: 290,
-    maxHeight: 520,
-    overflowY: 'auto',
+    position: 'absolute', bottom: 36, left: 0,
+    width: 290, maxHeight: 520, overflowY: 'auto',
     background: 'rgba(243,241,232,0.97)', backdropFilter: 'blur(12px)',
     border: '1px solid rgba(180,170,150,0.4)',
     borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
@@ -254,19 +291,10 @@ const s = {
     padding: '10px 12px 6px',
     borderBottom: '1px solid rgba(180,170,150,0.25)',
   },
-  title: { fontSize: 13, fontWeight: 600, color: T.text },
-  backBtn: {
-    background: 'none', border: 'none', cursor: 'pointer',
-    fontSize: 12, color: T.textMuted, padding: 0, fontFamily: 'inherit',
-  },
-  refreshBtn: {
-    background: 'none', border: 'none', cursor: 'pointer',
-    fontSize: 15, color: T.textMuted, padding: '0 2px', fontFamily: 'inherit',
-  },
-  tabs: {
-    display: 'flex', gap: 0,
-    borderBottom: '1px solid rgba(180,170,150,0.25)',
-  },
+  title:      { fontSize: 13, fontWeight: 600, color: T.text },
+  backBtn:    { background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: T.textMuted, padding: 0, fontFamily: 'inherit' },
+  refreshBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, color: T.textMuted, padding: '0 2px', fontFamily: 'inherit' },
+  tabs:       { display: 'flex', borderBottom: '1px solid rgba(180,170,150,0.25)' },
   tabBtn: {
     flex: 1, padding: '7px 8px',
     background: 'none', border: 'none', cursor: 'pointer',
@@ -275,28 +303,19 @@ const s = {
     transition: 'all 0.15s',
   },
   tabActive: { color: T.text, borderBottom: `2px solid ${T.text}` },
-  badge: {
-    background: '#e5e1d0', borderRadius: 8,
-    padding: '1px 5px', fontSize: 10, color: T.text,
-  },
-  list: { padding: '4px 0' },
+  badge:     { background: '#e5e1d0', borderRadius: 8, padding: '1px 5px', fontSize: 10, color: T.text },
+  list:      { padding: '4px 0' },
   deviceRow: {
     display: 'flex', alignItems: 'center', gap: 10,
-    padding: '9px 12px',
-    cursor: 'pointer', transition: 'background 0.1s',
+    padding: '9px 12px', cursor: 'pointer', transition: 'background 0.1s',
     borderBottom: '1px solid rgba(180,170,150,0.12)',
   },
-  statusDot: {
-    width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-  },
+  statusDot:  { width: 8, height: 8, borderRadius: '50%', flexShrink: 0 },
   deviceName: { fontSize: 12, fontWeight: 600, color: T.text, marginBottom: 1 },
   deviceMeta: { fontSize: 11, color: T.textMuted },
-  chevron: { fontSize: 16, color: T.textMuted, flexShrink: 0 },
+  chevron:    { fontSize: 16, color: T.textMuted, flexShrink: 0 },
   formSection: { padding: '10px 12px 4px' },
-  eui: {
-    fontFamily: T.fontMono, fontSize: 10, color: T.textMuted,
-    letterSpacing: '0.05em', marginBottom: 6,
-  },
+  eui: { fontFamily: T.fontMono, fontSize: 10, color: T.textMuted, letterSpacing: '0.05em', marginBottom: 6 },
   label: { display: 'block', fontSize: 11, color: T.textMuted, marginBottom: 3, marginTop: 8 },
   input: {
     width: '100%', boxSizing: 'border-box',
@@ -310,13 +329,15 @@ const s = {
     borderRadius: 6, cursor: 'pointer', fontSize: 12,
     fontFamily: 'inherit', fontWeight: 600, transition: 'opacity 0.15s',
   },
-  logSection: {
-    padding: '8px 12px 12px',
-    borderTop: '1px solid rgba(180,170,150,0.25)',
+  backfillMsg: {
+    marginTop: 8, padding: '5px 8px',
+    background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)',
+    borderRadius: 6, fontSize: 11, color: '#15803d',
   },
-  logTitle: { fontSize: 11, fontWeight: 600, color: T.textMuted, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' },
-  logRow: { padding: '5px 0', borderBottom: '1px solid rgba(180,170,150,0.12)' },
-  logTime: { fontSize: 10, color: T.textMuted, marginBottom: 2 },
-  logFields: { display: 'flex', flexWrap: 'wrap', gap: '4px 10px', fontSize: 11, color: T.text },
-  muted: { fontSize: 12, color: T.textMuted },
+  logSection:  { padding: '8px 12px 12px', borderTop: '1px solid rgba(180,170,150,0.25)' },
+  logTitle:    { fontSize: 11, fontWeight: 600, color: T.textMuted, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' },
+  logRow:      { padding: '5px 0', borderBottom: '1px solid rgba(180,170,150,0.12)' },
+  logTime:     { fontSize: 10, color: T.textMuted, marginBottom: 2 },
+  logFields:   { display: 'flex', flexWrap: 'wrap', gap: '4px 10px', fontSize: 11, color: T.text },
+  muted:       { fontSize: 12, color: T.textMuted },
 }
