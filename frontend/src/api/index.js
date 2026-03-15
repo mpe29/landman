@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabase = createClient(
+export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY,
 )
@@ -127,7 +127,7 @@ export const api = {
     return data
   },
 
-  async createObservation({ propertyId, operationId, geom, observedAt, type, notes, imageUrl }) {
+  async createObservation({ propertyId, operationId, geom, observedAt, type, notes, imageUrl, bearing }) {
     const { data, error } = await supabase.rpc('create_observation', {
       p_property_id:  propertyId,
       p_operation_id: operationId || null,
@@ -136,6 +136,7 @@ export const api = {
       p_type:         type || null,
       p_notes:        notes || null,
       p_image_url:    imageUrl || null,
+      p_bearing:      bearing ?? null,
     })
     if (error) throw error
     return data
@@ -350,6 +351,15 @@ export const api = {
   async deleteLivestock(id) {
     const { error } = await supabase.from('livestock').delete().eq('id', id)
     if (error) throw error
+  },
+
+  // ---------------------------------------------------------------
+  // Devices / IoT
+  // ---------------------------------------------------------------
+  async getDevicePositions() {
+    const { data, error } = await supabase.from('device_positions').select('*')
+    if (error) throw error
+    return data
   },
 
   // ---------------------------------------------------------------

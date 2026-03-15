@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
-import { T } from '../constants/theme'
+import { T, C } from '../constants/theme'
 
 const SEXES = [
   { value: 'bull',   label: 'Bull'   },
@@ -30,48 +30,49 @@ const styles = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   modal: {
-    background: T.surface, borderRadius: 14, padding: 24, width: 420, maxWidth: '95vw',
+    background: T.surface, borderRadius: 12, padding: 24, width: 420, maxWidth: '95vw',
     maxHeight: '90vh', overflowY: 'auto',
     boxShadow: '0 8px 40px rgba(47,47,47,0.18)',
     borderTop: `4px solid ${T.brand}`,
   },
   badge: {
     display: 'inline-block', fontSize: 11, fontWeight: 700, letterSpacing: 1,
-    color: T.brand, background: T.brandBg, borderRadius: 6,
+    color: T.brand, background: T.brandBg, borderRadius: 4,
     padding: '3px 10px', marginBottom: 8,
   },
-  title: { fontSize: 20, fontWeight: 700, color: T.text, marginBottom: 16 },
-  label: { fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: T.textMuted, textTransform: 'uppercase', marginBottom: 4 },
+  title: { fontSize: 18, fontWeight: 700, color: T.text, marginBottom: 16 },
+  label: { fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: T.textMuted, textTransform: 'uppercase', marginBottom: 4 },
   input: {
-    width: '100%', padding: '9px 12px', borderRadius: 8, fontSize: 14,
-    border: `1.5px solid ${T.surfaceBorder}`, background: T.surfaceBorder, color: T.text,
-    fontFamily: 'inherit', boxSizing: 'border-box',
+    width: '100%', padding: '8px 12px', borderRadius: 6, fontSize: 13,
+    border: `1px solid ${T.surfaceBorder}`, background: T.surfaceBorder, color: T.text,
+    fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none',
   },
   select: {
-    width: '100%', padding: '9px 12px', borderRadius: 8, fontSize: 14,
-    border: `1.5px solid ${T.surfaceBorder}`, background: T.surfaceBorder, color: T.text,
-    fontFamily: 'inherit', boxSizing: 'border-box',
+    width: '100%', padding: '8px 12px', borderRadius: 6, fontSize: 13,
+    border: `1px solid ${T.surfaceBorder}`, background: T.surfaceBorder, color: T.text,
+    fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none',
   },
   row: { marginBottom: 14 },
   toggleRow: { display: 'flex', gap: 8, marginBottom: 14 },
   toggleBtn: (active) => ({
-    flex: 1, padding: '8px 0', borderRadius: 8, fontSize: 13, fontWeight: 600,
-    border: active ? `2px solid ${T.brand}` : `2px solid ${T.surfaceBorder}`,
+    flex: 1, padding: '8px 0', borderRadius: 6, fontSize: 13, fontWeight: 600,
+    border: active ? `2px solid ${T.brand}` : `1px solid ${T.surfaceBorder}`,
     background: active ? T.brandBg : T.surfaceBorder,
     color: active ? T.brand : T.textMuted, cursor: 'pointer', fontFamily: 'inherit',
+    transition: 'all 0.12s',
   }),
   section: {
     borderTop: `1px solid ${T.surfaceBorder}`, paddingTop: 14, marginTop: 4,
   },
-  sectionTitle: { fontSize: 12, fontWeight: 700, color: T.textMuted, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 12 },
+  sectionTitle: { fontSize: 10, fontWeight: 700, color: T.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 12 },
   actions: { display: 'flex', gap: 10, marginTop: 20 },
   btnCancel: {
-    flex: 1, padding: '10px 0', borderRadius: 9, fontSize: 14, fontWeight: 600,
-    border: `1.5px solid ${T.surfaceBorder}`, background: T.surfaceBorder, color: T.textMuted,
+    flex: 1, padding: '9px 0', borderRadius: 6, fontSize: 13, fontWeight: 600,
+    border: `1px solid ${T.surfaceBorder}`, background: T.surfaceBorder, color: T.textMuted,
     cursor: 'pointer', fontFamily: 'inherit',
   },
   btnSave: (saving) => ({
-    flex: 2, padding: '10px 0', borderRadius: 9, fontSize: 14, fontWeight: 700,
+    flex: 2, padding: '9px 0', borderRadius: 6, fontSize: 13, fontWeight: 700,
     border: 'none', background: saving ? T.accent : T.brand, color: T.textOnDark,
     cursor: saving ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
   }),
@@ -144,8 +145,8 @@ export function AssignLivestockModal({ campId, campName, propertyId, onSaved, on
         <div style={styles.title}>Add Livestock</div>
 
         {campName && (
-          <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 14 }}>
-            Assigning to <strong style={{ color: '#111827' }}>{campName}</strong>
+          <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 14 }}>
+            Assigning to <strong style={{ color: T.text }}>{campName}</strong>
           </div>
         )}
 
@@ -284,14 +285,14 @@ export function RecordLossModal({ livestock, onSaved, onClose }) {
 
   return (
     <div style={styles.overlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div style={{ ...styles.modal, borderTopColor: '#dc2626', width: 360 }}>
-        <div style={{ ...styles.badge, color: '#dc2626', background: 'rgba(220,38,38,0.08)' }}>RECORD LOSS</div>
+      <div style={{ ...styles.modal, borderTopColor: T.danger, width: 360 }}>
+        <div style={{ ...styles.badge, color: T.danger, background: T.dangerBg }}>RECORD LOSS</div>
         <div style={styles.title}>
           {livestock?.emoji} {livestock?.common_name}
           {livestock?.breed_name ? ` — ${livestock.breed_name}` : ''}
         </div>
-        <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>
-          Current alive count: <strong style={{ color: '#111827' }}>{maxCount}</strong>
+        <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 16 }}>
+          Current alive count: <strong style={{ color: T.text }}>{maxCount}</strong>
         </div>
 
         <div style={styles.row}>
@@ -322,7 +323,7 @@ export function RecordLossModal({ livestock, onSaved, onClose }) {
 
         <div style={styles.actions}>
           <button style={styles.btnCancel} onClick={onClose}>Cancel</button>
-          <button style={{ ...styles.btnSave(saving), background: saving ? '#fca5a5' : '#dc2626' }}
+          <button style={{ ...styles.btnSave(saving), background: saving ? T.dangerBorder : T.danger }}
             onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : 'Record Loss'}
           </button>
@@ -376,8 +377,8 @@ export function MoveLivestockModal({ livestock, camps, onSaved, onClose }) {
 
   return (
     <div style={styles.overlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div style={{ ...styles.modal, borderTopColor: '#2563eb', width: 360 }}>
-        <div style={{ ...styles.badge, color: '#2563eb', background: 'rgba(37,99,235,0.08)' }}>MOVE LIVESTOCK</div>
+      <div style={{ ...styles.modal, borderTopColor: C.dustyBlue, width: 360 }}>
+        <div style={{ ...styles.badge, color: C.dustyBlue, background: C.dustyBlue + '14' }}>MOVE LIVESTOCK</div>
         <div style={styles.title}>
           {livestock?.emoji} {livestock?.alive_count ?? livestock?.head_count} {livestock?.common_name}
         </div>
@@ -387,7 +388,7 @@ export function MoveLivestockModal({ livestock, camps, onSaved, onClose }) {
             <div style={styles.label}>Head count</div>
             <input type="number" min={1} max={maxCount} style={styles.input}
               value={headCount} onChange={(e) => setHeadCount(e.target.value)} />
-            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>Max: {maxCount}</div>
+            <div style={{ fontSize: 11, color: T.textFaint, marginTop: 3 }}>Max: {maxCount}</div>
           </div>
           <div>
             <div style={styles.label}>Move to camp</div>
@@ -400,7 +401,7 @@ export function MoveLivestockModal({ livestock, camps, onSaved, onClose }) {
 
         <div style={styles.actions}>
           <button style={styles.btnCancel} onClick={onClose}>Cancel</button>
-          <button style={{ ...styles.btnSave(saving), background: saving ? '#93c5fd' : '#2563eb' }}
+          <button style={{ ...styles.btnSave(saving), background: saving ? C.dustyBlue + '88' : C.dustyBlue }}
             onClick={handleSave} disabled={saving}>
             {saving ? 'Moving…' : 'Move Livestock'}
           </button>

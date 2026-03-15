@@ -11,13 +11,13 @@ const CONFIG = {
   draw_farm: {
     title: 'Save Farm',
     hint: 'Name this farm within your property.',
-    color: '#D4B646',
+    color: '#4C7A8C',
     showParent: false,
   },
   draw_camp: {
     title: 'Save Camp / Paddock',
     hint: 'Name this camp and select which farm it belongs to.',
-    color: '#4C7A8C',
+    color: '#D4B646',
     showParent: true,
   },
 }
@@ -185,10 +185,10 @@ const styles = {
     fontFamily: 'inherit',
   },
   warn: {
-    color: '#92400e',
+    color: T.warn,
     fontSize: 13,
-    background: '#D4B64614',
-    border: '1px solid #D4B64640',
+    background: T.warnBg,
+    border: `1px solid ${T.warnBorder}`,
     borderRadius: 6,
     padding: '8px 12px',
   },

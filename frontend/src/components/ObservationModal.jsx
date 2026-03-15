@@ -99,6 +99,7 @@ export default function ObservationModal({ propertyId, operations, tagTypes = []
           type:        null,
           notes:       photo.notes.trim() || null,
           imageUrl,
+          bearing:     photo.bearing ?? null,
         })
         // Apply batch tags to the new observation
         if (obsId && batchTagIds.length > 0) {

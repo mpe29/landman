@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
+import { C, T } from './constants/theme'
 import Map from './components/Map'
+import MainMenu from './components/MainMenu'
 import Toolbar from './components/Toolbar'
 import LayerControl from './components/LayerControl'
 import DrawAreaModal from './components/DrawAreaModal'
@@ -32,6 +34,10 @@ export default function App() {
   const [selectedFeature, setSelectedFeature] = useState(null)
   const [showObsModal, setShowObsModal]   = useState(false)
   const [operations, setOperations]       = useState([])
+
+  // ── Which bottom-left panel is open (only one at a time) ───────
+  const [openPanel, setOpenPanel] = useState(null)
+  const handlePanelOpen = (id) => setOpenPanel((prev) => prev === id ? null : id)
 
   // ── Persisted layer visibility ─────────────────────────────────
   const [layerVisibility, setLayerVisibility] = useState(() =>
@@ -68,7 +74,6 @@ export default function App() {
     saveLS('landman_obs_filter', next)
   }
 
-  // Filtered count (for the panel header badge)
   const filteredObsCount = useMemo(
     () => filterObservations(loadedData.observations, obsFilter).length,
     [loadedData.observations, obsFilter]
@@ -108,8 +113,7 @@ export default function App() {
   }
 
   const handleDrawComplete = (geometry) => setPendingGeometry(geometry)
-
-  const handleDataLoaded = (data) => setLoadedData(data)
+  const handleDataLoaded   = (data) => setLoadedData(data)
 
   const handleFeatureClick = (feature) => {
     if (mode !== 'view') return
@@ -181,24 +185,48 @@ export default function App() {
         heatmap={heatmap}
       />
 
-      <Toolbar
-        mode={mode}
-        onModeChange={handleModeChange}
-        onObservationClick={() => setShowObsModal(true)}
+      {/* ── Top-left: app menu ── */}
+      <MainMenu
+        isOpen={openPanel === 'menu'}
+        onOpen={() => handlePanelOpen('menu')}
       />
 
-      <LayerControl visibility={layerVisibility} onChange={handleLayerToggle} />
-
-      <ObservationFilterPanel
-        observations={loadedData.observations}
-        tagTypes={tagTypes}
-        filter={obsFilter}
-        onChange={handleObsFilterChange}
-        onAddTagType={handleAddTagType}
-        filteredCount={filteredObsCount}
-        heatmap={heatmap}
-        onHeatmapToggle={() => setHeatmap((h) => !h)}
-      />
+      {/* ── Bottom-left: stacked panels (only one open at a time) ── */}
+      <div style={stackStyle}>
+        <Toolbar
+          mode={mode}
+          onModeChange={handleModeChange}
+          isOpen={openPanel === 'create'}
+          onOpen={() => handlePanelOpen('create')}
+        />
+        <LayerControl
+          visibility={layerVisibility}
+          onChange={handleLayerToggle}
+          isOpen={openPanel === 'layers'}
+          onOpen={() => handlePanelOpen('layers')}
+        />
+        {/* OBSERVE + standalone heatmap toggle side by side */}
+        <div style={observeRowStyle}>
+          <ObservationFilterPanel
+            observations={loadedData.observations}
+            tagTypes={tagTypes}
+            filter={obsFilter}
+            onChange={handleObsFilterChange}
+            onAddTagType={handleAddTagType}
+            filteredCount={filteredObsCount}
+            onObservationClick={() => setShowObsModal(true)}
+            isOpen={openPanel === 'observe'}
+            onOpen={() => handlePanelOpen('observe')}
+          />
+          <button
+            style={{ ...heatBtnStyle, ...(heatmap ? heatBtnOnStyle : {}) }}
+            onClick={() => setHeatmap((h) => !h)}
+            title={heatmap ? 'Switch to point view' : 'Switch to heat map'}
+          >
+            {heatmap ? '●' : '≋'}
+          </button>
+        </div>
+      </div>
 
       {/* Area draw modal */}
       {pendingGeometry && isAreaDraw && (
@@ -247,4 +275,36 @@ export default function App() {
       )}
     </div>
   )
+}
+
+const stackStyle = {
+  position: 'absolute',
+  bottom: 32,
+  left: 16,
+  zIndex: 10,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'flex-start',
+  gap: 6,
+}
+
+const observeRowStyle = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: 6,
+}
+
+const heatBtnStyle = {
+  width: 30, height: 30,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  background: T.surface, backdropFilter: 'blur(10px)',
+  border: `1px solid ${T.surfaceBorder}`, borderRadius: 8,
+  boxShadow: T.surfaceShadow, cursor: 'pointer',
+  fontSize: 14, color: T.textMuted, fontFamily: 'inherit', padding: 0,
+  transition: 'all 0.15s', flexShrink: 0,
+}
+const heatBtnOnStyle = {
+  background: C.burntOrange + '18',
+  borderColor: C.burntOrange + '55',
+  color: C.burntOrange,
 }
