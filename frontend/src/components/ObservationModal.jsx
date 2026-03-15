@@ -48,20 +48,28 @@ export default function ObservationModal({ propertyId, operations, tagTypes = []
       preview:      URL.createObjectURL(file),
       exifStatus:   'loading',  // loading | done
       lat: null, lng: null, timestamp: null, bearing: null,
+      imageHash:    null,       // SHA-256 hex, set after hashing
+      dupStatus:    null,       // null | 'checking' | 'duplicate' | 'clear'
+      dupDecision:  null,       // null | 'skip' | 'force'
       notes:        '',
-      uploadStatus: 'pending',  // pending | uploading | done | error
+      uploadStatus: 'pending',  // pending | uploading | done | skipped | error
       errorMsg:     null,
     }))
 
     setPhotos((prev) => [...prev, ...newPhotos])
 
-    // Parse EXIF concurrently
+    // Parse EXIF and hash file concurrently
     newPhotos.forEach((photo) => {
       readExif(photo.file).then((exif) => {
         setPhotos((prev) =>
           prev.map((p) => p.id === photo.id ? { ...p, ...exif, exifStatus: 'done' } : p)
         )
       })
+      api.hashFile(photo.file).then((hash) => {
+        setPhotos((prev) =>
+          prev.map((p) => p.id === photo.id ? { ...p, imageHash: hash } : p)
+        )
+      }).catch(() => {}) // hash failure is non-fatal — duplicate check skipped
     })
   }, [])
 
@@ -76,13 +84,71 @@ export default function ObservationModal({ propertyId, operations, tagTypes = []
   const updatePhoto = (id, updates) =>
     setPhotos((prev) => prev.map((p) => p.id === id ? { ...p, ...updates } : p))
 
-  // ── Upload all pending photos sequentially ────────────────────────
+  // ── Upload all pending photos (two-phase: check duplicates then upload) ──────
   const handleUploadAll = async () => {
-    const pending = photos.filter((p) => p.uploadStatus !== 'done')
+    const pending = photos.filter((p) => p.uploadStatus === 'pending')
     if (!pending.length) return
     setUploading(true)
 
-    for (const photo of pending) {
+    // Phase 1: duplicate check — only for photos with a hash not yet checked
+    const unchecked = pending.filter((p) => p.imageHash && p.dupStatus === null)
+    if (unchecked.length > 0) {
+      setPhotos((prev) =>
+        prev.map((p) => unchecked.find((u) => u.id === p.id) ? { ...p, dupStatus: 'checking' } : p)
+      )
+      let hasDuplicates = false
+      await Promise.all(
+        unchecked.map(async (photo) => {
+          try {
+            const dup = await api.findDuplicateObservation(propertyId, photo.imageHash)
+            if (dup) hasDuplicates = true
+            setPhotos((prev) =>
+              prev.map((p) => p.id === photo.id ? { ...p, dupStatus: dup ? 'duplicate' : 'clear' } : p)
+            )
+          } catch {
+            setPhotos((prev) =>
+              prev.map((p) => p.id === photo.id ? { ...p, dupStatus: 'clear' } : p)
+            )
+          }
+        })
+      )
+      setUploading(false)
+      if (hasDuplicates) return  // show duplicate cards — user resolves then clicks again
+    } else {
+      setUploading(false)
+    }
+
+    // Recompute from current state snapshot to pick up resolved decisions
+    setPhotos((current) => {
+      const toUpload = current.filter(
+        (p) => p.uploadStatus === 'pending' && p.dupDecision !== 'skip'
+      )
+      const toSkip = current.filter(
+        (p) => p.uploadStatus === 'pending' && p.dupDecision === 'skip'
+      )
+      // Mark skipped immediately
+      const afterSkip = current.map((p) =>
+        toSkip.find((s) => s.id === p.id) ? { ...p, uploadStatus: 'skipped' } : p
+      )
+
+      // Kick off upload outside of this setState callback
+      setTimeout(() => doUpload(toUpload), 0)
+      return afterSkip
+    })
+  }
+
+  const doUpload = async (toUpload) => {
+    if (!toUpload.length) {
+      setPhotos((current) => {
+        if (current.every((p) => ['done', 'skipped'].includes(p.uploadStatus))) {
+          setTimeout(onSaved, 400)
+        }
+        return current
+      })
+      return
+    }
+    setUploading(true)
+    for (const photo of toUpload) {
       updatePhoto(photo.id, { uploadStatus: 'uploading' })
       try {
         const imageUrl = await api.uploadObservationImage(photo.file)
@@ -100,8 +166,8 @@ export default function ObservationModal({ propertyId, operations, tagTypes = []
           notes:       photo.notes.trim() || null,
           imageUrl,
           bearing:     photo.bearing ?? null,
+          imageHash:   photo.imageHash || null,
         })
-        // Apply batch tags to the new observation
         if (obsId && batchTagIds.length > 0) {
           await Promise.all(
             batchTagIds.map((tId) => api.addObservationTag(obsId, tId).catch(() => {}))
@@ -112,20 +178,20 @@ export default function ObservationModal({ propertyId, operations, tagTypes = []
         updatePhoto(photo.id, { uploadStatus: 'error', errorMsg: err.message })
       }
     }
-
     setUploading(false)
-    // Close if every photo succeeded
     setPhotos((current) => {
-      if (current.every((p) => p.uploadStatus === 'done')) {
+      if (current.every((p) => ['done', 'skipped'].includes(p.uploadStatus))) {
         setTimeout(onSaved, 400)
       }
       return current
     })
   }
 
-  const doneCount    = photos.filter((p) => p.uploadStatus === 'done').length
-  const pendingCount = photos.filter((p) => p.uploadStatus !== 'done').length
-  const hasErrors    = photos.some((p) => p.uploadStatus === 'error')
+  const doneCount       = photos.filter((p) => p.uploadStatus === 'done').length
+  const unresolvedDups  = photos.filter((p) => p.uploadStatus === 'pending' && p.dupStatus === 'duplicate' && p.dupDecision === null)
+  const willUploadCount = photos.filter((p) => p.uploadStatus === 'pending' && p.dupDecision !== 'skip').length
+  const pendingCount    = photos.filter((p) => p.uploadStatus === 'pending').length
+  const hasErrors       = photos.some((p) => p.uploadStatus === 'error')
 
   return (
     <div style={styles.overlay}>
@@ -217,6 +283,7 @@ export default function ObservationModal({ propertyId, operations, tagTypes = []
                 photo={photo}
                 onRemove={() => removePhoto(photo.id)}
                 onNotes={(v) => updatePhoto(photo.id, { notes: v })}
+                onDupDecision={(decision) => updatePhoto(photo.id, { dupDecision: decision })}
               />
             ))}
           </div>
@@ -246,16 +313,19 @@ export default function ObservationModal({ propertyId, operations, tagTypes = []
           <button
             style={{
               ...styles.saveBtn,
+              ...(unresolvedDups.length > 0 ? { background: '#b45309' } : {}),
               opacity: (!pendingCount || uploading) ? 0.45 : 1,
             }}
             onClick={handleUploadAll}
-            disabled={!pendingCount || uploading}
+            disabled={!pendingCount || uploading || unresolvedDups.length > 0}
           >
             {uploading
-              ? `Uploading ${doneCount + 1} of ${photos.length}…`
+              ? `Checking / Uploading…`
+              : unresolvedDups.length > 0
+              ? `Resolve ${unresolvedDups.length} duplicate${unresolvedDups.length !== 1 ? 's' : ''} above`
               : hasErrors
               ? `Retry ${pendingCount} Failed`
-              : `Upload ${pendingCount} Photo${pendingCount !== 1 ? 's' : ''}`}
+              : `Upload ${willUploadCount} Photo${willUploadCount !== 1 ? 's' : ''}`}
           </button>
         </div>
       </div>
@@ -264,35 +334,65 @@ export default function ObservationModal({ propertyId, operations, tagTypes = []
 }
 
 // ── Individual photo card ─────────────────────────────────────────────────────
-function PhotoCard({ photo, onRemove, onNotes }) {
+function PhotoCard({ photo, onRemove, onNotes, onDupDecision }) {
   const borderColor =
     photo.uploadStatus === 'done'      ? C.pistachioGreen :
     photo.uploadStatus === 'uploading' ? C.dryGrassYellow :
     photo.uploadStatus === 'error'     ? T.danger :
+    photo.uploadStatus === 'skipped'   ? 'rgba(0,0,0,0.12)' :
+    photo.dupStatus    === 'duplicate' ? '#b45309' :
+    photo.dupStatus    === 'checking'  ? C.dryGrassYellow :
     T.surfaceBorder
 
   return (
-    <div style={{ ...styles.card, borderColor }}>
+    <div style={{ ...styles.card, borderColor, opacity: photo.uploadStatus === 'skipped' ? 0.45 : 1 }}>
       {/* Remove button */}
-      {photo.uploadStatus === 'pending' && (
+      {photo.uploadStatus === 'pending' && photo.dupStatus !== 'checking' && (
         <button style={styles.cardRemove} onClick={onRemove} title="Remove">✕</button>
       )}
 
       {/* Thumbnail */}
       <img src={photo.preview} style={styles.thumb} alt="" />
 
-      {/* Status overlay */}
+      {/* Upload / hash-check status overlay */}
       {photo.uploadStatus !== 'pending' && (
         <div style={{
           ...styles.statusBar,
           background:
             photo.uploadStatus === 'done'      ? C.deepOlive + 'e6'  :
             photo.uploadStatus === 'uploading' ? C.dryGrassYellow + 'e6' :
+            photo.uploadStatus === 'skipped'   ? 'rgba(80,80,80,0.82)' :
             T.danger + 'e6',
         }}>
           {photo.uploadStatus === 'uploading' ? '⏳ Uploading…' :
            photo.uploadStatus === 'done'      ? '✓ Saved'       :
+           photo.uploadStatus === 'skipped'   ? 'Skipped'       :
            `✕ ${photo.errorMsg ?? 'Error'}`}
+        </div>
+      )}
+
+      {/* Duplicate checking spinner */}
+      {photo.dupStatus === 'checking' && (
+        <div style={{ ...styles.statusBar, background: '#92400ee6' }}>
+          🔍 Checking…
+        </div>
+      )}
+
+      {/* Duplicate warning + decision */}
+      {photo.dupStatus === 'duplicate' && photo.dupDecision === null && (
+        <div style={styles.dupBanner}>
+          <div style={styles.dupMsg}>Already uploaded</div>
+          <div style={styles.dupActions}>
+            <button style={styles.dupSkipBtn} onClick={() => onDupDecision('skip')}>Skip</button>
+            <button style={styles.dupForceBtn} onClick={() => onDupDecision('force')}>Upload Anyway</button>
+          </div>
+        </div>
+      )}
+
+      {/* Forced-duplicate indicator */}
+      {photo.dupDecision === 'force' && photo.uploadStatus === 'pending' && (
+        <div style={{ ...styles.statusBar, background: '#92400ee6' }}>
+          Will upload anyway
         </div>
       )}
 
@@ -553,6 +653,52 @@ const styles = {
     background:  'rgba(0,0,0,0.05)',
     color:       'rgba(0,0,0,0.4)',
     alignSelf:   'flex-start',
+  },
+  dupBanner: {
+    position:        'absolute',
+    top:             0,
+    left:            0,
+    right:           0,
+    background:      'rgba(180,83,9,0.93)',
+    padding:         '6px 8px',
+    display:         'flex',
+    flexDirection:   'column',
+    gap:             5,
+    zIndex:          3,
+  },
+  dupMsg: {
+    color:      '#fff',
+    fontSize:   10,
+    fontWeight: 700,
+    textAlign:  'center',
+  },
+  dupActions: {
+    display: 'flex',
+    gap:     4,
+  },
+  dupSkipBtn: {
+    flex:         1,
+    background:   'rgba(255,255,255,0.18)',
+    border:       '1px solid rgba(255,255,255,0.4)',
+    borderRadius: 4,
+    color:        '#fff',
+    fontSize:     10,
+    fontWeight:   700,
+    padding:      '4px 0',
+    cursor:       'pointer',
+    fontFamily:   'inherit',
+  },
+  dupForceBtn: {
+    flex:         1,
+    background:   'rgba(255,255,255,0.9)',
+    border:       'none',
+    borderRadius: 4,
+    color:        '#92400e',
+    fontSize:     10,
+    fontWeight:   700,
+    padding:      '4px 0',
+    cursor:       'pointer',
+    fontFamily:   'inherit',
   },
   cardNotes: {
     background:   T.surface,

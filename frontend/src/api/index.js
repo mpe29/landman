@@ -127,7 +127,7 @@ export const api = {
     return data
   },
 
-  async createObservation({ propertyId, operationId, geom, observedAt, type, notes, imageUrl, bearing }) {
+  async createObservation({ propertyId, operationId, geom, observedAt, type, notes, imageUrl, bearing, imageHash }) {
     const { data, error } = await supabase.rpc('create_observation', {
       p_property_id:  propertyId,
       p_operation_id: operationId || null,
@@ -137,6 +137,7 @@ export const api = {
       p_notes:        notes || null,
       p_image_url:    imageUrl || null,
       p_bearing:      bearing ?? null,
+      p_image_hash:   imageHash || null,
     })
     if (error) throw error
     return data
@@ -160,6 +161,31 @@ export const api = {
   // ---------------------------------------------------------------
   // Storage — observation images
   // ---------------------------------------------------------------
+
+  // SHA-256 hex digest of raw file bytes. Used for duplicate detection.
+  // Returns null if the browser lacks crypto.subtle (non-HTTPS non-localhost).
+  async hashFile(file) {
+    if (!crypto?.subtle) return null
+    const buffer = await file.arrayBuffer()
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+  },
+
+  // Returns the existing observation row if this hash already exists for the
+  // property, otherwise null. Callers use this to warn before re-uploading.
+  async findDuplicateObservation(propertyId, imageHash) {
+    const { data, error } = await supabase
+      .from('observations')
+      .select('id, observed_at, image_url')
+      .eq('property_id', propertyId)
+      .eq('image_hash', imageHash)
+      .maybeSingle()
+    if (error) throw error
+    return data   // null = no duplicate
+  },
+
   async uploadObservationImage(file) {
     const ext  = file.name.split('.').pop().toLowerCase()
     const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
