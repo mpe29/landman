@@ -162,15 +162,28 @@ export const api = {
   // Storage — observation images
   // ---------------------------------------------------------------
 
-  // SHA-256 hex digest of raw file bytes. Used for duplicate detection.
-  // Returns null if the browser lacks crypto.subtle (non-HTTPS non-localhost).
+  // Hash raw file bytes for duplicate detection.
+  // Uses SHA-256 (crypto.subtle) when available (HTTPS / localhost).
+  // Falls back to a pure-JS FNV-1a 64-bit hash on plain-HTTP contexts where
+  // crypto.subtle is blocked — prefixed "fnv:" so values never collide with
+  // SHA-256 hashes stored by secure-context uploads.
   async hashFile(file) {
-    if (!crypto?.subtle) return null
     const buffer = await file.arrayBuffer()
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
-    return Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')
+    if (crypto?.subtle) {
+      const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+      return Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+    }
+    // Pure-JS FNV-1a 64-bit (two 32-bit halves)
+    const bytes = new Uint8Array(buffer)
+    let h1 = 0x811c9dc5 >>> 0
+    let h2 = 0xc4ceb9fe >>> 0
+    for (let i = 0; i < bytes.length; i++) {
+      h1 = Math.imul(h1 ^ bytes[i], 0x01000193) >>> 0
+      h2 = Math.imul(h2 ^ bytes[i], 0x811c9dc5) >>> 0
+    }
+    return 'fnv:' + h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0')
   },
 
   // Returns the existing observation row if this hash already exists for the
