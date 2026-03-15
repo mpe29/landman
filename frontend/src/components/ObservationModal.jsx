@@ -175,7 +175,11 @@ export default function ObservationModal({ propertyId, operations, tagTypes = []
         }
         updatePhoto(photo.id, { uploadStatus: 'done' })
       } catch (err) {
-        updatePhoto(photo.id, { uploadStatus: 'error', errorMsg: err.message })
+        const isDup = err.message?.includes('duplicate key') || err.code === '23505'
+        updatePhoto(photo.id, {
+          uploadStatus: 'error',
+          errorMsg: isDup ? 'Duplicate image already exists' : err.message,
+        })
       }
     }
     setUploading(false)
