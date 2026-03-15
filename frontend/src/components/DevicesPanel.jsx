@@ -300,9 +300,9 @@ const s = {
     background: 'none', border: 'none', cursor: 'pointer',
     fontSize: 11, color: T.textMuted, fontFamily: 'inherit',
     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-    transition: 'all 0.15s',
+    transition: 'all 0.15s', boxShadow: 'none',
   },
-  tabActive: { color: T.text, borderBottom: `2px solid ${T.text}` },
+  tabActive: { color: T.text, boxShadow: `inset 0 -2px 0 ${T.text}` },
   badge:     { background: '#e5e1d0', borderRadius: 8, padding: '1px 5px', fontSize: 10, color: T.text },
   list:      { padding: '4px 0' },
   deviceRow: {
