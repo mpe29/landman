@@ -175,6 +175,8 @@ export default function Map({
   onDrawUpdate,
   onDataLoaded,
   onFeatureClick,
+  onViewportObs,
+  onMapReady,
   selectedObsId,
   obsMode,
   deviceMode,
@@ -185,6 +187,7 @@ export default function Map({
   const obsModeRef       = useRef('individual')  // shadow for layerVisibility effect
   const deviceModeRef    = useRef('individual')  // shadow for layerVisibility effect
   const onFeatureClickRef = useRef(onFeatureClick) // always-current ref (avoids stale closure)
+  const onViewportObsRef = useRef(onViewportObs)
   const onDrawUpdateRef  = useRef(onDrawUpdate)
   const modeRef          = useRef(mode)          // always-current mode for event listeners
   const gpsWatchRef      = useRef(null)
@@ -199,6 +202,7 @@ export default function Map({
 
   // Keep refs current whenever props change
   useEffect(() => { onFeatureClickRef.current = onFeatureClick }, [onFeatureClick])
+  useEffect(() => { onViewportObsRef.current  = onViewportObs  }, [onViewportObs])
   useEffect(() => { onDrawUpdateRef.current   = onDrawUpdate   }, [onDrawUpdate])
   useEffect(() => { modeRef.current           = mode           }, [mode])
 
@@ -476,7 +480,27 @@ export default function Map({
         }
       }, { passive: true })
 
+      // ── Viewport observation reporting for ImageStrip ──────────
+      const reportViewportObs = () => {
+        if (!map.current.getLayer('observations-circle')) return
+        const features = map.current.queryRenderedFeatures({ layers: ['observations-circle'] })
+        // Deduplicate (Mapbox can return tiles with overlap)
+        const seen = new Set()
+        const obs = []
+        for (const f of features) {
+          if (seen.has(f.properties.id)) continue
+          seen.add(f.properties.id)
+          obs.push(f.properties)
+        }
+        onViewportObsRef.current?.(obs)
+      }
+      map.current.on('moveend', reportViewportObs)
+      map.current.on('sourcedata', (e) => {
+        if (e.sourceId === 'observations' && e.isSourceLoaded) reportViewportObs()
+      })
+
       setReady(true)
+      onMapReady?.(map.current)
     })
 
     map.current.on('draw.create', (e) => {
