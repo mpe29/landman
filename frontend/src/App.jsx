@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { C, T } from './constants/theme'
 import Map from './components/Map'
 import MainMenu from './components/MainMenu'
@@ -10,6 +10,8 @@ import ObservationModal from './components/ObservationModal'
 import ObservationFilterPanel from './components/ObservationFilterPanel'
 import FeaturePanel from './components/FeaturePanel'
 import DevicesPanel from './components/DevicesPanel'
+import ImageStrip, { STRIP_HEIGHT, COLLAPSED_H } from './components/ImageStrip'
+import Lightbox from './components/Lightbox'
 import { api } from './api'
 import { POINT_DRAW_MODES } from './constants/pointTypes'
 import { DEFAULT_VISIBILITY } from './constants/layers'
@@ -87,6 +89,38 @@ export default function App() {
   const [deviceMode, setDeviceMode] = useState('individual') // individual | heatmap | hidden
   const cycleObs    = () => setObsMode((m)    => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
   const cycleDevice = () => setDeviceMode((m) => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
+
+  // ── Viewport observations (for ImageStrip) ─────────────────
+  const [viewportObs, setViewportObs] = useState([])
+  const [lightboxObs, setLightboxObs] = useState(null) // observation to show in lightbox
+  const [stripCollapsed, setStripCollapsed] = useState(false)
+  const [hoverLine, setHoverLine] = useState(null) // { thumbX, thumbY, dotX, dotY }
+  const mapInstanceRef = useRef(null)
+
+  const handleMapReady = useCallback((m) => { mapInstanceRef.current = m }, [])
+
+  const handleStripHover = useCallback((info) => {
+    if (!info || !mapInstanceRef.current) { setHoverLine(null); return }
+    const { obs, x, y } = info
+    const coords = obs.geom?.coordinates
+    if (!coords) { setHoverLine(null); return }
+    const dot = mapInstanceRef.current.project(coords)
+    setHoverLine({ thumbX: x, thumbY: y, dotX: dot.x, dotY: dot.y })
+  }, [])
+
+  // Merge viewport feature properties with full observation data (to get image_url etc.)
+  // Debounced to avoid rapid re-renders during map panning
+  const vpDebounceRef = useRef(null)
+  const handleViewportObs = useCallback((vpFeatures) => {
+    if (vpDebounceRef.current) clearTimeout(vpDebounceRef.current)
+    vpDebounceRef.current = setTimeout(() => {
+      const idSet = new Set(vpFeatures.map((f) => f.id))
+      const full = loadedData.observations.filter((o) => idSet.has(o.id))
+      setViewportObs(full)
+    }, 200)
+  }, [loadedData.observations])
+
+  const showImageStrip = obsMode !== 'hidden' && mode === 'view'
 
   // ── Tag types ─────────────────────────────────────────────────
   const [tagTypes, setTagTypes] = useState([])
@@ -217,6 +251,8 @@ export default function App() {
         onDrawUpdate={setEditedGeometry}
         onDataLoaded={handleDataLoaded}
         onFeatureClick={handleFeatureClick}
+        onViewportObs={handleViewportObs}
+        onMapReady={handleMapReady}
         selectedObsId={selectedFeature?.featureType === 'observation' ? selectedFeature.data?.id : null}
         obsMode={obsMode}
         deviceMode={deviceMode}
@@ -229,7 +265,7 @@ export default function App() {
       />
 
       {/* ── Bottom-left: stacked panels (only one open at a time) ── */}
-      <div style={stackStyle}>
+      <div style={{ ...stackStyle, bottom: showImageStrip ? (stripCollapsed ? COLLAPSED_H + 46 : STRIP_HEIGHT + 10) : 32 }}>
         <Toolbar
           mode={mode}
           onModeChange={handleModeChange}
@@ -312,8 +348,8 @@ export default function App() {
         />
       )}
 
-      {/* Feature detail / edit panel */}
-      {selectedFeature && !pendingGeometry && !showObsModal && !editingBoundary && (
+      {/* Feature detail / edit panel — skip for observations (handled by ImageStrip + Lightbox) */}
+      {selectedFeature && selectedFeature.featureType !== 'observation' && !pendingGeometry && !showObsModal && !editingBoundary && (
         <FeaturePanel
           feature={selectedFeature}
           camps={loadedData.camps}
@@ -335,6 +371,35 @@ export default function App() {
           onCancel={() => { setEditingBoundary(null); setEditedGeometry(null); setMode('view') }}
         />
       )}
+
+      {/* Bottom image strip — viewport-filtered observations */}
+      {showImageStrip && (
+        <ImageStrip
+          observations={viewportObs}
+          selectedObsId={selectedFeature?.featureType === 'observation' ? selectedFeature.data?.id : null}
+          onSelect={(obs) => handleFeatureClick({ featureType: 'observation', data: obs })}
+          onImageClick={(obs) => setLightboxObs(obs)}
+          collapsed={stripCollapsed}
+          onToggleCollapse={() => setStripCollapsed((c) => !c)}
+          onHover={handleStripHover}
+        />
+      )}
+
+      {/* Connector line from hovered thumbnail to map dot */}
+      {hoverLine && <ConnectorLine line={hoverLine} />}
+
+      {/* Lightbox for expanded image */}
+      {lightboxObs && (
+        <Lightbox
+          observation={lightboxObs}
+          observations={viewportObs.filter((o) => o.image_url).sort((a, b) => new Date(a.observed_at) - new Date(b.observed_at))}
+          onClose={() => setLightboxObs(null)}
+          onNavigate={(obs) => {
+            setLightboxObs(obs)
+            handleFeatureClick({ featureType: 'observation', data: obs })
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -351,6 +416,30 @@ function EditBoundaryBar({ name, saving, onSave, onCancel }) {
         </button>
       </div>
     </div>
+  )
+}
+
+/* ── Connector line: thumbnail → map dot ────────────────────────── */
+function ConnectorLine({ line }) {
+  const { thumbX, thumbY, dotX, dotY } = line
+  return (
+    <svg
+      style={{
+        position: 'absolute', inset: 0, zIndex: 11,
+        pointerEvents: 'none', overflow: 'visible',
+      }}
+      width="100%"
+      height="100%"
+    >
+      <line
+        x1={dotX} y1={dotY}
+        x2={thumbX} y2={thumbY}
+        stroke="rgba(255,255,255,0.7)"
+        strokeWidth="1.5"
+        strokeDasharray="none"
+      />
+      <circle cx={dotX} cy={dotY} r="4" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="1.5" />
+    </svg>
   )
 }
 
@@ -381,13 +470,13 @@ const ebBar = {
 
 const stackStyle = {
   position: 'absolute',
-  bottom: 32,
   left: 16,
   zIndex: 10,
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'flex-start',
   gap: 6,
+  transition: 'bottom 0.25s ease',
 }
 
 const observeRowStyle = {

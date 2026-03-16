@@ -144,7 +144,7 @@ export default function ObservationFilterPanel({
                       style={{ ...s.seasonBtn, ...(allOn ? { color: season.color, borderColor: season.color, background: season.color + '14' } : {}) }}
                       onClick={() => toggleSeason(season.months)}
                     >
-                      {season.label}
+                      {season.label[0]}
                     </button>
                   )
                 })}
@@ -153,14 +153,15 @@ export default function ObservationFilterPanel({
             <div style={s.monthGrid}>
               {MONTH_ABBR.map((lbl, i) => {
                 const m = i + 1
+                const active = selectedMonths.includes(m)
                 return (
-                  <Chip
+                  <button
                     key={m}
-                    label={lbl}
-                    active={selectedMonths.includes(m)}
-                    color={C.dustyBlue}
+                    style={{ ...s.monthBtn, ...(active ? { background: C.dustyBlue + '1a', borderColor: C.dustyBlue, color: C.dustyBlue, fontWeight: 700 } : {}) }}
                     onClick={() => toggleMonth(m)}
-                  />
+                  >
+                    {lbl[0]}
+                  </button>
                 )
               })}
             </div>
@@ -256,10 +257,10 @@ function Chip({ label, active, color, onClick }) {
 const chip = {
   base: {
     display: 'inline-flex', alignItems: 'center',
-    padding: '3px 8px', borderRadius: 20,
+    padding: '2px 6px', borderRadius: 12,
     borderWidth: 1, borderStyle: 'solid', borderColor: T.surfaceBorder,
     background: 'transparent',
-    color: T.textMuted, fontSize: 11, fontWeight: 500,
+    color: T.textMuted, fontSize: 10, fontWeight: 500,
     cursor: 'pointer', transition: 'all 0.12s', whiteSpace: 'nowrap',
     fontFamily: 'inherit',
   },
@@ -273,11 +274,12 @@ const s = {
     borderRadius: 10,
     boxShadow: T.surfaceShadow,
     overflow: 'hidden',
+    maxWidth: 320,
   },
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     width: '100%', background: 'transparent', border: 'none',
-    padding: '9px 14px', cursor: 'pointer',
+    padding: '7px 10px', cursor: 'pointer',
   },
   headerLeft:  { display: 'flex', alignItems: 'center', gap: 8 },
   headerRight: { display: 'flex', alignItems: 'center', gap: 6 },
@@ -297,37 +299,45 @@ const s = {
   },
 
   addObsBtn: {
-    display: 'flex', alignItems: 'center', gap: 8,
+    display: 'flex', alignItems: 'center', gap: 6,
     width: '100%', background: T.brandBg,
-    border: `1px solid ${T.brandBorder}`, borderRadius: 6,
-    color: T.brand, fontSize: 12, fontWeight: 600,
-    padding: '7px 12px', cursor: 'pointer', fontFamily: 'inherit',
+    border: `1px solid ${T.brandBorder}`, borderRadius: 5,
+    color: T.brand, fontSize: 11, fontWeight: 600,
+    padding: '5px 10px', cursor: 'pointer', fontFamily: 'inherit',
     transition: 'all 0.15s',
   },
-  addObsIcon: { fontSize: 14 },
+  addObsIcon: { fontSize: 12 },
 
   section: {
-    padding: '10px 14px 8px',
+    padding: '6px 10px 5px',
     borderBottom: `1px solid ${T.surfaceBorder}`,
   },
   sectionRow: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6,
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4,
   },
   sectionLabel: {
-    display: 'block', marginBottom: 6,
-    color: T.textFaint, fontSize: 10, fontWeight: 700,
+    display: 'block', marginBottom: 4,
+    color: T.textFaint, fontSize: 9, fontWeight: 700,
     letterSpacing: '0.1em', textTransform: 'uppercase',
   },
-  chipRow: { display: 'flex', flexWrap: 'wrap', gap: 4 },
+  chipRow: { display: 'flex', flexWrap: 'wrap', gap: 3 },
 
-  seasonRow: { display: 'flex', gap: 3 },
+  seasonRow: { display: 'flex', gap: 2 },
   seasonBtn: {
-    fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4,
+    fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
     border: `1px solid ${T.surfaceBorder}`,
     background: 'transparent', color: T.textMuted,
     cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.12s',
+    width: 20, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
-  monthGrid: { display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 3 },
+  monthGrid: { display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 2 },
+  monthBtn: {
+    fontSize: 9, fontWeight: 600, padding: '2px 0', borderRadius: 3,
+    border: `1px solid ${T.surfaceBorder}`,
+    background: 'transparent', color: T.textMuted,
+    cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.12s',
+    textAlign: 'center',
+  },
 
   modeToggle: {
     fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10,
@@ -336,9 +346,9 @@ const s = {
   },
 
   addTagBtn: {
-    marginTop: 8, fontSize: 11, color: T.brand, background: 'transparent',
-    border: `1px dashed ${T.brandBorder}`, borderRadius: 6,
-    padding: '4px 10px', cursor: 'pointer', fontFamily: 'inherit',
+    marginTop: 4, fontSize: 10, color: T.brand, background: 'transparent',
+    border: `1px dashed ${T.brandBorder}`, borderRadius: 5,
+    padding: '3px 8px', cursor: 'pointer', fontFamily: 'inherit',
   },
   addTagForm: {
     marginTop: 8, padding: 8,
