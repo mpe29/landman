@@ -18,7 +18,7 @@ import PendingScreen from './components/PendingScreen'
 import UserManagementPanel from './components/UserManagementPanel'
 import { api } from './api'
 import { POINT_DRAW_MODES } from './constants/pointTypes'
-import { DEFAULT_VISIBILITY } from './constants/layers'
+import { DEFAULT_VISIBILITY, ACTIVE_LAYERS } from './constants/layers'
 import { DEFAULT_OBS_FILTER, filterObservations } from './utils/obsFilter'
 
 const AREA_DRAW_MODES = new Set(['draw_property', 'draw_farm', 'draw_camp'])
@@ -107,7 +107,14 @@ export default function App() {
       setAuthLoading(false)
     })
     const { data: { subscription } } = api.onAuthStateChange((_event, s) => {
-      setSession(s)
+      // Only update session when user actually changes (sign-in/out),
+      // not on TOKEN_REFRESHED events that fire on tab focus.
+      setSession((prev) => {
+        const prevId = prev?.user?.id
+        const nextId = s?.user?.id
+        if (prevId === nextId && prevId != null) return prev // same user, keep stable ref
+        return s
+      })
       if (s && window.location.hash.startsWith('#/join/')) {
         window.history.replaceState(null, '', window.location.pathname + '#')
         setJoinToken(null)
@@ -117,12 +124,32 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
-  // Load memberships when session changes
+  // Load memberships when session changes; auto-create property if
+  // the user signed up with email confirmation (property stashed in localStorage).
   useEffect(() => {
     if (!session) { setMembershipsLoaded(true); return }
-    setMembershipsLoaded(false)
+    // Only show loading screen on first load; skip flash on token refreshes
+    const isFirstLoad = memberships.length === 0
+    if (isFirstLoad) setMembershipsLoaded(false)
     api.getMyMemberships()
-      .then((m) => { setMemberships(m); setMembershipsLoaded(true) })
+      .then(async (m) => {
+        if (m.length === 0) {
+          try {
+            const raw = localStorage.getItem('landman_pending_property')
+            if (raw) {
+              const pending = JSON.parse(raw)
+              localStorage.removeItem('landman_pending_property')
+              await api.createProperty({ name: pending.name, owner: pending.owner })
+              const refreshed = await api.getMyMemberships()
+              setMemberships(refreshed)
+              setMembershipsLoaded(true)
+              return
+            }
+          } catch (e) { console.error('Auto-create property failed:', e) }
+        }
+        setMemberships(m)
+        setMembershipsLoaded(true)
+      })
       .catch((err) => { console.error(err); setMembershipsLoaded(true) })
   }, [session])
 
@@ -177,6 +204,35 @@ export default function App() {
   const handleObsFilterChange = (next) => {
     setObsFilter(next)
     saveLS('landman_obs_filter', next)
+  }
+
+  // Layer-panel layers only (not observations/devices which have own panels)
+  const layerPanelIds = ACTIVE_LAYERS.filter((l) => !l.ownPanel).map((l) => l.id)
+  const anyLayerOn = layerPanelIds.some((id) => layerVisibility[id] !== false)
+  const savedLayerVisRef = useRef(null)
+  const toggleAllLayers = () => {
+    if (anyLayerOn) {
+      // Stash current state BEFORE the state update, then hide all
+      const stash = {}
+      layerPanelIds.forEach((id) => { stash[id] = layerVisibility[id] !== false })
+      savedLayerVisRef.current = stash
+      setLayerVisibility((prev) => {
+        const next = { ...prev }
+        layerPanelIds.forEach((id) => { next[id] = false })
+        saveLS('landman_layer_visibility', next)
+        return next
+      })
+    } else {
+      // Restore previous state (or default all-on if nothing saved)
+      const saved = savedLayerVisRef.current
+      setLayerVisibility((prev) => {
+        const next = { ...prev }
+        layerPanelIds.forEach((id) => { next[id] = saved ? saved[id] : true })
+        saveLS('landman_layer_visibility', next)
+        return next
+      })
+      savedLayerVisRef.current = null
+    }
   }
 
   const cycleObs    = () => setObsMode((m) => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
@@ -305,7 +361,10 @@ export default function App() {
       </div>
     )
   }
-  if (memberships.length === 0) return <PendingScreen />
+  if (memberships.length === 0) return <PendingScreen onPropertyCreated={() => {
+    setMembershipsLoaded(false)
+    api.getMyMemberships().then((m) => { setMemberships(m); setMembershipsLoaded(true) }).catch(() => setMembershipsLoaded(true))
+  }} />
 
   // ── Main app (authenticated + has membership) ───────────────────
   return (
@@ -348,12 +407,22 @@ export default function App() {
           isOpen={openPanel === 'create'}
           onOpen={() => handlePanelOpen('create')}
         />
-        <LayerControl
-          visibility={layerVisibility}
-          onChange={handleLayerToggle}
-          isOpen={openPanel === 'layers'}
-          onOpen={() => handlePanelOpen('layers')}
-        />
+        {/* LAYERS + on/off toggle side by side */}
+        <div style={observeRowStyle}>
+          <LayerControl
+            visibility={layerVisibility}
+            onChange={handleLayerToggle}
+            isOpen={openPanel === 'layers'}
+            onOpen={() => handlePanelOpen('layers')}
+          />
+          <button
+            style={{ ...heatBtnStyle, ...(anyLayerOn ? layerBtnOnStyle : dimBtnStyle) }}
+            onClick={toggleAllLayers}
+            title={anyLayerOn ? 'Hide layers' : 'Show layers'}
+          >
+            {anyLayerOn ? '●' : '○'}
+          </button>
+        </div>
         {/* DEVICES + display mode toggle side by side */}
         <div style={observeRowStyle}>
           <DevicesPanel
@@ -587,5 +656,10 @@ const devBtnOnStyle = {
   background: C.pistachioGreen + '18',
   border: `1px solid ${C.pistachioGreen}55`,
   color: C.pistachioGreen,
+}
+const layerBtnOnStyle = {
+  background: C.dryGrassYellow + '18',
+  border: `1px solid ${C.dryGrassYellow}55`,
+  color: C.dryGrassYellow,
 }
 const dimBtnStyle = { opacity: 0.4 }

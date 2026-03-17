@@ -6,6 +6,9 @@ export default function LoginScreen() {
   const [mode, setMode] = useState('signin') // 'signin' | 'signup' | 'pin_name' | 'pin_enter'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [fullName, setFullName] = useState('')
   const [propertyName, setPropertyName] = useState('')
   const [error, setError] = useState('')
@@ -26,11 +29,18 @@ export default function LoginScreen() {
     try {
       if (mode === 'signin') {
         await api.signIn({ email, password })
+      } else if (password !== confirmPassword) {
+        setError('Passwords do not match')
+        setLoading(false)
+        return
       } else {
         const { session } = await api.signUp({ email, password, fullName })
         if (session) {
           await api.createProperty({ name: propertyName, owner: fullName })
         } else {
+          // Email confirmation required — stash property info so we can
+          // create it after the user confirms and signs in.
+          try { localStorage.setItem('landman_pending_property', JSON.stringify({ name: propertyName, owner: fullName })) } catch {}
           setSignupSuccess(true)
         }
       }
@@ -236,16 +246,55 @@ export default function LoginScreen() {
             required
             autoComplete="email"
           />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={s.input}
-            required
-            minLength={6}
-            autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-          />
+          <div style={s.passwordWrap}>
+            <input
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={s.passwordInput}
+              required
+              minLength={6}
+              autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+            />
+            <button
+              type="button"
+              style={s.eyeBtn}
+              onClick={() => setShowPassword(!showPassword)}
+              tabIndex={-1}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? '🙈' : '👁'}
+            </button>
+          </div>
+
+          {mode === 'signup' && (
+            <div style={s.pwHint}>At least 6 characters</div>
+          )}
+
+          {mode === 'signup' && (
+            <div style={s.passwordWrap}>
+              <input
+                type={showConfirmPassword ? 'text' : 'password'}
+                placeholder="Confirm Password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                style={s.passwordInput}
+                required
+                minLength={6}
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                style={s.eyeBtn}
+                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                tabIndex={-1}
+                aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+              >
+                {showConfirmPassword ? '🙈' : '👁'}
+              </button>
+            </div>
+          )}
 
           {error && <div style={s.error}>{error}</div>}
 
@@ -263,7 +312,7 @@ export default function LoginScreen() {
           </button>
           <button
             style={s.linkBtn}
-            onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError('') }}
+            onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); setConfirmPassword(''); setShowPassword(false); setShowConfirmPassword(false) }}
           >
             {mode === 'signin'
               ? "Don't have an account? Create Property"
@@ -308,6 +357,24 @@ const s = {
     fontSize: 14, fontFamily: 'inherit', outline: 'none',
     background: '#fff', color: T.text,
     boxSizing: 'border-box',
+  },
+  passwordWrap: {
+    position: 'relative', width: '100%',
+  },
+  passwordInput: {
+    width: '100%', padding: '10px 42px 10px 14px',
+    border: `1px solid ${T.surfaceBorder}`, borderRadius: 8,
+    fontSize: 14, fontFamily: 'inherit', outline: 'none',
+    background: '#fff', color: T.text,
+    boxSizing: 'border-box',
+  },
+  pwHint: {
+    fontSize: 11, color: T.textMuted, marginTop: -4, paddingLeft: 2,
+  },
+  eyeBtn: {
+    position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+    background: 'none', border: 'none', cursor: 'pointer',
+    fontSize: 18, padding: 4, lineHeight: 1,
   },
   btn: {
     width: '100%', padding: '11px 0', marginTop: 4,

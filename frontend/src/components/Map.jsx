@@ -361,20 +361,20 @@ export default function Map({
         source: 'live_devices',
         layout: { visibility: 'none' },
         paint: {
-          // High weight so even 1-2 devices are visible; tighter radius than obs
-          // so the blob is proportionate to actual device position, not a giant smear.
-          'heatmap-weight': 5,
-          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 2, 9, 5],
-          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 12, 9, 40],
+          // Focused glow per device — small radius so individual positions
+          // are distinct even with few devices (scores, not thousands).
+          'heatmap-weight': 1,
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 0.6, 9, 1.5, 14, 2.5],
+          'heatmap-radius':    ['interpolate', ['linear'], ['zoom'], 0, 6, 9, 18, 14, 30],
           'heatmap-color': [
             'interpolate', ['linear'], ['heatmap-density'],
             0,    'rgba(78,91,60,0)',
-            0.1,  '#86efac',
+            0.15, '#86efac',
             0.4,  C.pistachioGreen,
             0.7,  C.deepOlive,
             1,    '#14532d',
           ],
-          'heatmap-opacity': 0.85,
+          'heatmap-opacity': 0.75,
         },
       })
 
@@ -536,9 +536,13 @@ export default function Map({
           if (hideDots) {
             el.style.display = 'none'
           } else {
+            const isHeat = deviceModeRef.current === 'heatmap'
             el.style.display = ''
-            el.style.opacity = deviceModeRef.current === 'heatmap' ? '0.25' : '1'
-            el.style.border = deviceModeRef.current === 'heatmap' ? 'none' : ''
+            el.style.opacity = isHeat ? '0.3' : '1'
+            el.style.border = isHeat ? 'none' : ''
+            el.style.width = isHeat ? '10px' : '16px'
+            el.style.height = isHeat ? '10px' : '16px'
+            el.style.animation = isHeat ? 'none' : ''
           }
         })
         if (map.current.getLayer('devices-heat'))
@@ -702,8 +706,12 @@ export default function Map({
         el.style.display = 'none'
       } else {
         el.style.display = ''
-        el.style.opacity = deviceMode === 'heatmap' ? '0.25' : '1'
-        el.style.border = deviceMode === 'heatmap' ? 'none' : ''
+        const isHeat = deviceMode === 'heatmap'
+        el.style.opacity = isHeat ? '0.3' : '1'
+        el.style.border = isHeat ? 'none' : ''
+        el.style.width = isHeat ? '10px' : '16px'
+        el.style.height = isHeat ? '10px' : '16px'
+        el.style.animation = isHeat ? 'none' : ''
       }
     })
     if (map.current.getLayer('devices-heat'))
@@ -832,9 +840,13 @@ export default function Map({
         if (hide) {
           el.style.display = 'none'
         } else {
+          const isHeat = deviceModeRef.current === 'heatmap'
           el.style.display = ''
-          el.style.opacity = deviceModeRef.current === 'heatmap' ? '0.25' : '1'
-          el.style.border = deviceModeRef.current === 'heatmap' ? 'none' : ''
+          el.style.opacity = isHeat ? '0.3' : '1'
+          el.style.border = isHeat ? 'none' : ''
+          el.style.width = isHeat ? '10px' : '16px'
+          el.style.height = isHeat ? '10px' : '16px'
+          el.style.animation = isHeat ? 'none' : ''
         }
       })
 
