@@ -26,8 +26,9 @@ async function loadAllData() {
     api.getPointAssets(),
     api.getObservations(),
     api.getLivestockCampCounts().catch(() => []),
-    api.getDevicePositions(),
+    api.getDevicePositions().catch((err) => { console.error('[loadAllData] getDevicePositions failed:', err); return [] }),
   ])
+  console.info(`[loadAllData] devices=${devicePositions.length}, obs=${observations.length}, areas=${areas.length}`)
   return {
     properties,
     farms:            areas.filter((a) => a.level === 'farm'),
@@ -636,7 +637,7 @@ export default function Map({
           }
         }
       }
-    })
+    }).catch((err) => console.error('[loadAllData] failed:', err))
   }, [ready, reloadKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Highlight selected observation (Google Images-style invert) ─
