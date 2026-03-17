@@ -12,6 +12,10 @@ import FeaturePanel from './components/FeaturePanel'
 import DevicesPanel from './components/DevicesPanel'
 import ImageStrip, { STRIP_HEIGHT, COLLAPSED_H } from './components/ImageStrip'
 import Lightbox from './components/Lightbox'
+import LoginScreen from './components/LoginScreen'
+import JoinScreen from './components/JoinScreen'
+import PendingScreen from './components/PendingScreen'
+import UserManagementPanel from './components/UserManagementPanel'
 import { api } from './api'
 import { POINT_DRAW_MODES } from './constants/pointTypes'
 import { DEFAULT_VISIBILITY } from './constants/layers'
@@ -28,73 +32,49 @@ function saveLS(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)) } catch {}
 }
 
+// ── Parse #/join/TOKEN from URL ──────────────────────────────────
+function getJoinToken() {
+  const hash = window.location.hash
+  const match = hash.match(/^#\/join\/(.+)$/)
+  return match ? match[1] : null
+}
+
 export default function App() {
-  const [mode, setMode]                   = useState('view')
-  const [reloadKey, setReloadKey]         = useState(0)
+  // ── Auth state (always declared, never conditional) ─────────────
+  const [session, setSession]           = useState(null)
+  const [authLoading, setAuthLoading]   = useState(true)
+  const [memberships, setMemberships]   = useState([])
+  const [membershipsLoaded, setMembershipsLoaded] = useState(false)
+  const [pendingCount, setPendingCount] = useState(0)
+  const [showUserMgmt, setShowUserMgmt] = useState(false)
+  const [joinToken, setJoinToken] = useState(getJoinToken)
+
+  // ── App state (always declared) ─────────────────────────────────
+  const [mode, setMode]                     = useState('view')
+  const [reloadKey, setReloadKey]           = useState(0)
   const [pendingGeometry, setPendingGeometry] = useState(null)
-  const [saving, setSaving]               = useState(false)
-  const [editingBoundary, setEditingBoundary] = useState(null) // { featureType, id, name, boundary }
-  const [editedGeometry,  setEditedGeometry]  = useState(null) // latest geometry from draw.update
-  const [loadedData, setLoadedData]       = useState({ properties: [], farms: [], camps: [], observations: [] })
+  const [saving, setSaving]                 = useState(false)
+  const [editingBoundary, setEditingBoundary] = useState(null)
+  const [editedGeometry, setEditedGeometry]   = useState(null)
+  const [loadedData, setLoadedData]         = useState({ properties: [], farms: [], camps: [], observations: [] })
   const [selectedFeature, setSelectedFeature] = useState(null)
-  const [showObsModal, setShowObsModal]   = useState(false)
-  const [operations, setOperations]       = useState([])
-
-  // ── Which bottom-left panel is open (only one at a time) ───────
-  const [openPanel, setOpenPanel] = useState(null)
-  const handlePanelOpen = (id) => setOpenPanel((prev) => prev === id ? null : id)
-
-  // ── Persisted layer visibility ─────────────────────────────────
+  const [showObsModal, setShowObsModal]     = useState(false)
+  const [operations, setOperations]         = useState([])
+  const [openPanel, setOpenPanel]           = useState(null)
   const [layerVisibility, setLayerVisibility] = useState(() =>
     ({ ...DEFAULT_VISIBILITY, ...loadLS('landman_layer_visibility', {}) })
   )
-  const handleLayerToggle = (id, visible) => {
-    setLayerVisibility((prev) => {
-      const next = { ...prev, [id]: visible }
-      saveLS('landman_layer_visibility', next)
-      return next
-    })
-  }
-
-  // ── Persisted home view ────────────────────────────────────────
-  const [homeView, setHomeView] = useState(() => loadLS('landman_home_view', null))
-
-  const handleSetHome = ({ center, zoom }) => {
-    const hv = { center, zoom, layerVisibility }
-    setHomeView(hv)
-    saveLS('landman_home_view', hv)
-  }
-
-  const handleRestoreVisibility = (vis) => {
-    setLayerVisibility(vis)
-    saveLS('landman_layer_visibility', vis)
-  }
-
-  // ── Observation filter (persisted) ────────────────────────────
-  const [obsFilter, setObsFilter] = useState(() =>
-    loadLS('landman_obs_filter', DEFAULT_OBS_FILTER)
-  )
-  const handleObsFilterChange = (next) => {
-    setObsFilter(next)
-    saveLS('landman_obs_filter', next)
-  }
-
-  const filteredObsCount = useMemo(
-    () => filterObservations(loadedData.observations, obsFilter).length,
-    [loadedData.observations, obsFilter]
-  )
-
-  // ── Observation / device display modes ───────────────────────
-  const [obsMode,    setObsMode]    = useState('individual') // individual | heatmap | hidden
-  const [deviceMode, setDeviceMode] = useState('individual') // individual | heatmap | hidden
-  const cycleObs    = () => setObsMode((m)    => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
-  const cycleDevice = () => setDeviceMode((m) => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
+  const [homeView, setHomeView]   = useState(() => loadLS('landman_home_view', null))
+  const [obsFilter, setObsFilter] = useState(() => loadLS('landman_obs_filter', DEFAULT_OBS_FILTER))
+  const [obsMode, setObsMode]       = useState('individual')
+  const [deviceMode, setDeviceMode] = useState('individual')
+  const [tagTypes, setTagTypes]     = useState([])
 
   // ── Viewport observations (for ImageStrip) ─────────────────
   const [viewportObs, setViewportObs] = useState([])
-  const [lightboxObs, setLightboxObs] = useState(null) // observation to show in lightbox
+  const [lightboxObs, setLightboxObs] = useState(null)
   const [stripCollapsed, setStripCollapsed] = useState(false)
-  const [hoverLine, setHoverLine] = useState(null) // { thumbX, thumbY, dotX, dotY }
+  const [hoverLine, setHoverLine] = useState(null)
   const mapInstanceRef = useRef(null)
 
   const handleMapReady = useCallback((m) => { mapInstanceRef.current = m }, [])
@@ -108,8 +88,6 @@ export default function App() {
     setHoverLine({ thumbX: x, thumbY: y, dotX: dot.x, dotY: dot.y })
   }, [])
 
-  // Merge viewport feature properties with full observation data (to get image_url etc.)
-  // Debounced to avoid rapid re-renders during map panning
   const vpDebounceRef = useRef(null)
   const handleViewportObs = useCallback((vpFeatures) => {
     if (vpDebounceRef.current) clearTimeout(vpDebounceRef.current)
@@ -122,13 +100,87 @@ export default function App() {
 
   const showImageStrip = obsMode !== 'hidden' && mode === 'view'
 
-  // ── Tag types ─────────────────────────────────────────────────
-  const [tagTypes, setTagTypes] = useState([])
+  // ── Auth effects ────────────────────────────────────────────────
+  useEffect(() => {
+    api.getSession().then((s) => {
+      setSession(s)
+      setAuthLoading(false)
+    })
+    const { data: { subscription } } = api.onAuthStateChange((_event, s) => {
+      setSession(s)
+      if (s && window.location.hash.startsWith('#/join/')) {
+        window.history.replaceState(null, '', window.location.pathname + '#')
+        setJoinToken(null)
+      }
+      if (!s) { setMemberships([]); setMembershipsLoaded(false); setPendingCount(0) }
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  // Load memberships when session changes
+  useEffect(() => {
+    if (!session) { setMembershipsLoaded(true); return }
+    setMembershipsLoaded(false)
+    api.getMyMemberships()
+      .then((m) => { setMemberships(m); setMembershipsLoaded(true) })
+      .catch((err) => { console.error(err); setMembershipsLoaded(true) })
+  }, [session])
+
+  // Derived auth values
+  const activeMembership = memberships[0] || null
+  const isAdmin = activeMembership?.is_admin || false
+  const activePropertyId = activeMembership?.property_id || null
+
+  // Pending count for admins
+  useEffect(() => {
+    if (!isAdmin || !activePropertyId) return
+    api.getPendingCount(activePropertyId).then(setPendingCount).catch(console.error)
+  }, [isAdmin, activePropertyId])
+
+  // ── App effects (only run when authenticated) ───────────────────
+  const filteredObsCount = useMemo(
+    () => filterObservations(loadedData.observations, obsFilter).length,
+    [loadedData.observations, obsFilter]
+  )
 
   useEffect(() => {
+    if (!session || !membershipsLoaded || memberships.length === 0) return
     const propertyId = loadedData.properties[0]?.id
     api.getObservationTagTypes(propertyId || null).then(setTagTypes).catch(console.error)
-  }, [loadedData.properties])
+  }, [loadedData.properties, session, membershipsLoaded, memberships.length])
+
+  useEffect(() => {
+    if (!session || !membershipsLoaded || memberships.length === 0) return
+    const propertyId = loadedData.properties[0]?.id
+    if (!propertyId) return
+    api.getOperations(propertyId).then(setOperations).catch(console.error)
+  }, [loadedData.properties, session, membershipsLoaded, memberships.length])
+
+  // ── Handlers ────────────────────────────────────────────────────
+  const handlePanelOpen = (id) => setOpenPanel((prev) => prev === id ? null : id)
+  const handleLayerToggle = (id, visible) => {
+    setLayerVisibility((prev) => {
+      const next = { ...prev, [id]: visible }
+      saveLS('landman_layer_visibility', next)
+      return next
+    })
+  }
+  const handleSetHome = ({ center, zoom }) => {
+    const hv = { center, zoom, layerVisibility }
+    setHomeView(hv)
+    saveLS('landman_home_view', hv)
+  }
+  const handleRestoreVisibility = (vis) => {
+    setLayerVisibility(vis)
+    saveLS('landman_layer_visibility', vis)
+  }
+  const handleObsFilterChange = (next) => {
+    setObsFilter(next)
+    saveLS('landman_obs_filter', next)
+  }
+
+  const cycleObs    = () => setObsMode((m) => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
+  const cycleDevice = () => setDeviceMode((m) => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
 
   const handleAddTagType = async (name, emoji, color) => {
     const propertyId = loadedData.properties[0]?.id
@@ -136,14 +188,6 @@ export default function App() {
     setTagTypes((prev) => [...prev, created])
   }
 
-  // ── Operations ────────────────────────────────────────────────
-  useEffect(() => {
-    const propertyId = loadedData.properties[0]?.id
-    if (!propertyId) return
-    api.getOperations(propertyId).then(setOperations).catch(console.error)
-  }, [loadedData.properties])
-
-  // ── Mode helpers ──────────────────────────────────────────────
   const reload = () => setReloadKey((k) => k + 1)
 
   const handleModeChange = (newMode) => {
@@ -188,7 +232,6 @@ export default function App() {
     setSelectedFeature(feature)
   }
 
-  // ── Area save (property / farm / camp) ───────────────────────
   const handleSaveArea = async ({ name, owner, parentId }) => {
     if (!pendingGeometry) return
     setSaving(true)
@@ -215,7 +258,6 @@ export default function App() {
     }
   }
 
-  // ── Point asset save ─────────────────────────────────────────
   const handleSavePoint = async ({ name, type, condition, notes }) => {
     if (!pendingGeometry) return
     setSaving(true)
@@ -233,9 +275,39 @@ export default function App() {
     }
   }
 
+  const handleLogout = () => api.signOut()
+
   const isAreaDraw  = AREA_DRAW_MODES.has(mode)
   const isPointDraw = POINT_DRAW_MODES.has(mode)
 
+  // ── Auth gates (render-time only, after all hooks) ──────────────
+  if (authLoading) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center',
+        justifyContent: 'center', background: `linear-gradient(135deg, ${C.deepOlive} 0%, ${C.pistachioGreen} 100%)` }}>
+        <div style={{ fontFamily: "'Exo 2', sans-serif", fontWeight: 800, fontSize: 28,
+          letterSpacing: '0.14em', color: C.panelBg }}>LANDMAN</div>
+      </div>
+    )
+  }
+  if (joinToken) {
+    // Sign out any existing session so the join user can authenticate with their PIN
+    if (session) { api.signOut(); return null }
+    return <JoinScreen token={joinToken} />
+  }
+  if (!session) return <LoginScreen />
+  if (!membershipsLoaded) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center',
+        justifyContent: 'center', background: `linear-gradient(135deg, ${C.deepOlive} 0%, ${C.pistachioGreen} 100%)` }}>
+        <div style={{ fontFamily: "'Exo 2', sans-serif", fontWeight: 800, fontSize: 28,
+          letterSpacing: '0.14em', color: C.panelBg }}>LANDMAN</div>
+      </div>
+    )
+  }
+  if (memberships.length === 0) return <PendingScreen />
+
+  // ── Main app (authenticated + has membership) ───────────────────
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <Map
@@ -262,6 +334,10 @@ export default function App() {
       <MainMenu
         isOpen={openPanel === 'menu'}
         onOpen={() => handlePanelOpen('menu')}
+        onLogout={handleLogout}
+        isAdmin={isAdmin}
+        pendingCount={pendingCount}
+        onUserManagement={() => { setShowUserMgmt(true); setOpenPanel(null) }}
       />
 
       {/* ── Bottom-left: stacked panels (only one open at a time) ── */}
@@ -398,6 +474,14 @@ export default function App() {
             setLightboxObs(obs)
             handleFeatureClick({ featureType: 'observation', data: obs })
           }}
+        />
+      )}
+
+      {/* User Management panel (admin only) */}
+      {showUserMgmt && activePropertyId && (
+        <UserManagementPanel
+          propertyId={activePropertyId}
+          onClose={() => { setShowUserMgmt(false); if (isAdmin) api.getPendingCount(activePropertyId).then(setPendingCount).catch(() => {}) }}
         />
       )}
     </div>
