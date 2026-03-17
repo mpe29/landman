@@ -3,6 +3,7 @@ import { POINT_TYPES } from '../constants/pointTypes'
 import { api } from '../api'
 import { AssignLivestockModal, RecordLossModal, MoveLivestockModal } from './AssignLivestockModal'
 import { T, C } from '../constants/theme'
+import { thumbUrl } from '../utils/thumbUrl'
 
 const LEVEL_COLOR = {
   property:    C.pistachioGreen,
@@ -344,7 +345,8 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, onE
       {featureType === 'observation' && data.image_url && (
         <div style={styles.photoWrap}>
           <img
-            src={data.image_url}
+            src={thumbUrl(data.image_url)}
+            onError={(e) => { if (e.target.src !== data.image_url) e.target.src = data.image_url }}
             alt="Observation"
             style={styles.photo}
             onClick={() => window.open(data.image_url, '_blank')}

@@ -5,6 +5,44 @@ export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_ANON_KEY,
 )
 
+// ---------------------------------------------------------------------------
+// Thumbnail generation — create a small JPEG alongside the full-res original.
+// Used by ImageStrip / FeaturePanel so browsers download ~20–40 KB instead of
+// the full 3–12 MB original.  Lightbox still loads the original URL.
+// ---------------------------------------------------------------------------
+const THUMB_MAX = 400
+const THUMB_QUALITY = 0.70
+
+function createThumbnail(file) {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith('image/')) return resolve(null)
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      let { width, height } = img
+      const scale = THUMB_MAX / Math.max(width, height)
+      if (scale >= 1) {
+        // Image already small — just use it as its own thumbnail
+        return resolve(null)
+      }
+      width = Math.round(width * scale)
+      height = Math.round(height * scale)
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+      canvas.toBlob(
+        (blob) => resolve(blob || null),
+        'image/jpeg',
+        THUMB_QUALITY,
+      )
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+    img.src = url
+  })
+}
+
 export const api = {
   // ---------------------------------------------------------------
   // Auth
@@ -335,12 +373,26 @@ export const api = {
 
   async uploadObservationImage(file) {
     const ext  = file.name.split('.').pop().toLowerCase()
-    const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const baseName = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const path = `${baseName}.${ext}`
+
+    // Upload full-res original
     const { error } = await supabase.storage
       .from('observation-images')
       .upload(path, file, { upsert: false })
     if (error) throw error
     const { data } = supabase.storage.from('observation-images').getPublicUrl(path)
+
+    // Upload thumbnail alongside (best-effort, don't block on failure).
+    // Convention: thumb/<baseName>.jpg — frontend derives this from image_url.
+    createThumbnail(file).then((blob) => {
+      if (!blob) return
+      supabase.storage
+        .from('observation-images')
+        .upload(`thumb/${baseName}.jpg`, blob, { upsert: false, contentType: 'image/jpeg' })
+        .catch(() => {}) // silent — original still works
+    })
+
     return data.publicUrl
   },
 
