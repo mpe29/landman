@@ -28,7 +28,7 @@ export default function DevicesPanel({ isOpen, onOpen }) {
   const [deviceTypes,  setDeviceTypes]  = useState([])
   const [selected,     setSelected]     = useState(null)
   const [readings,     setReadings]     = useState([])
-  const [tab,          setTab]          = useState('unregistered')
+  const [tab,          setTab]          = useState('registered')
   const [form,         setForm]         = useState({ name: '', notes: '', deviceTypeId: '' })
   const [saving,       setSaving]       = useState(false)
   const [backfillMsg,  setBackfillMsg]  = useState(null)
@@ -215,7 +215,7 @@ export default function DevicesPanel({ isOpen, onOpen }) {
               </div>
 
               <div style={s.tabs}>
-                {['unregistered', 'registered'].map((t) => {
+                {['registered', 'unregistered'].map((t) => {
                   const count = t === 'registered' ? registered.length : unregistered.length
                   return (
                     <button

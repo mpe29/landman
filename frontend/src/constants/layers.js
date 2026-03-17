@@ -116,6 +116,7 @@ export const LAYERS = [
     circleRadius:   6,
     featureType:    'observation',
     defaultVisible: true,
+    ownPanel:       true,            // controlled by ObservationFilterPanel + toggle
   },
   {
     id:             'livestock_counts',
@@ -132,6 +133,7 @@ export const LAYERS = [
     type:           'html_marker',   // rendered as pulsing CSS dot markers, not Mapbox layers
     featureType:    'device',
     defaultVisible: true,
+    ownPanel:       true,            // controlled by DevicesPanel + toggle
   },
 ]
 

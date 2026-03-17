@@ -5,7 +5,7 @@ import { T } from '../constants/theme'
 export default function LayerControl({ visibility, onChange, isOpen, onOpen }) {
   const grouped = LAYER_GROUPS.map((group) => ({
     ...group,
-    layers: ACTIVE_LAYERS.filter((l) => l.group === group.id),
+    layers: ACTIVE_LAYERS.filter((l) => l.group === group.id && !l.ownPanel),
   })).filter((g) => g.layers.length > 0)
 
   return (
