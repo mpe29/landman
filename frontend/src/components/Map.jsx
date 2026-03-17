@@ -158,6 +158,30 @@ function injectDeviceCss() {
       70%  { box-shadow: 0 0 0 14px rgba(34,197,94,0),   0 1px 4px rgba(0,0,0,0.35); }
       100% { box-shadow: 0 0 0 0   rgba(34,197,94,0),    0 1px 4px rgba(0,0,0,0.35); }
     }
+    .routing-dot {
+      width: 20px; height: 20px;
+      border: 2.5px solid #fff;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .routing-dot.fresh {
+      background: #6366f1;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+      animation: routing-pulse 3s ease-out infinite;
+    }
+    .routing-dot.stale {
+      background: #8b5cf6;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+    }
+    .routing-dot.inactive {
+      background: #a78bfa;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    }
+    @keyframes routing-pulse {
+      0%   { box-shadow: 0 0 0 0   rgba(99,102,241,0.5), 0 1px 4px rgba(0,0,0,0.35); }
+      70%  { box-shadow: 0 0 0 12px rgba(99,102,241,0),   0 1px 4px rgba(0,0,0,0.35); }
+      100% { box-shadow: 0 0 0 0   rgba(99,102,241,0),    0 1px 4px rgba(0,0,0,0.35); }
+    }
   `
   document.head.appendChild(style)
 }
@@ -180,6 +204,9 @@ export default function Map({
   selectedObsId,
   obsMode,
   deviceMode,
+  deviceTrailData,
+  deviceFilterActive,
+  onMapClick,
 }) {
   const mapContainer     = useRef(null)
   const map              = useRef(null)
@@ -187,6 +214,7 @@ export default function Map({
   const obsModeRef       = useRef('individual')  // shadow for layerVisibility effect
   const deviceModeRef    = useRef('individual')  // shadow for layerVisibility effect
   const onFeatureClickRef = useRef(onFeatureClick) // always-current ref (avoids stale closure)
+  const onMapClickRef     = useRef(onMapClick)
   const onViewportObsRef = useRef(onViewportObs)
   const onDrawUpdateRef  = useRef(onDrawUpdate)
   const modeRef          = useRef(mode)          // always-current mode for event listeners
@@ -202,6 +230,7 @@ export default function Map({
 
   // Keep refs current whenever props change
   useEffect(() => { onFeatureClickRef.current = onFeatureClick }, [onFeatureClick])
+  useEffect(() => { onMapClickRef.current = onMapClick }, [onMapClick])
   useEffect(() => { onViewportObsRef.current  = onViewportObs  }, [onViewportObs])
   useEffect(() => { onDrawUpdateRef.current   = onDrawUpdate   }, [onDrawUpdate])
   useEffect(() => { modeRef.current           = mode           }, [mode])
@@ -269,6 +298,7 @@ export default function Map({
           })
           map.current.on('click', `${layer.id}-fill`, (e) => {
             if (touchHandled) { touchHandled = false; return }
+            if (onMapClickRef.current) return  // placement mode — handled by general click
             const device = nearestDevice(e.point.x, e.point.y)
             if (device) { onFeatureClickRef.current?.({ featureType: 'device', data: device }); return }
             onFeatureClickRef.current?.({
@@ -292,6 +322,7 @@ export default function Map({
           })
           map.current.on('click', `${layer.id}-circle`, (e) => {
             if (touchHandled) { touchHandled = false; return }
+            if (onMapClickRef.current) return  // placement mode — handled by general click
             const device = nearestDevice(e.point.x, e.point.y)
             if (device) { onFeatureClickRef.current?.({ featureType: 'device', data: device }); return }
             onFeatureClickRef.current?.({ featureType: layer.featureType, data: e.features[0].properties })
@@ -392,6 +423,43 @@ export default function Map({
         paint: { 'line-color': '#3b82f6', 'line-width': 1.2, 'line-opacity': 0.45 },
       })
 
+      // ── Device trail layers (for time-filtered movement display) ──
+      map.current.addSource('device-trail', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addSource('device-trail-points', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addLayer({
+        id: 'device-trail-line', type: 'line', source: 'device-trail',
+        layout: { visibility: 'none', 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': ['coalesce', ['get', 'color'], '#22c55e'],
+          'line-width': 2.5,
+          'line-opacity': 0.8,
+        },
+      })
+      map.current.addLayer({
+        id: 'device-trail-points-circle', type: 'circle', source: 'device-trail-points',
+        layout: { visibility: 'none' },
+        paint: {
+          'circle-radius': 4,
+          'circle-color': ['coalesce', ['get', 'color'], '#22c55e'],
+          'circle-stroke-width': 1,
+          'circle-stroke-color': '#fff',
+          'circle-opacity': 0.85,
+        },
+      })
+
+      // ── Desktop: placement mode click intercept ──
+      map.current.on('click', (e) => {
+        if (onMapClickRef.current) {
+          onMapClickRef.current(e.lngLat)
+        }
+      })
+
       // ── Mobile: canvas touchend for reliable small-feature taps ──
       // map.on('click', layerId, ...) works on desktop but on iOS the
       // rendered circle is only 6px radius — too small for a fingertip.
@@ -419,6 +487,17 @@ export default function Map({
         // Ignore if the finger moved (pan gesture)
         if (Math.abs(touch.clientX - touchStartX) > 8 ||
             Math.abs(touch.clientY - touchStartY) > 8) return
+
+        // Placement mode intercept — routing device placement
+        if (onMapClickRef.current) {
+          const lngLat = map.current.unproject([
+            touch.clientX - canvas.getBoundingClientRect().left,
+            touch.clientY - canvas.getBoundingClientRect().top,
+          ])
+          markTouchHandled()
+          onMapClickRef.current(lngLat)
+          return
+        }
 
         const rect = canvas.getBoundingClientRect()
         const cx = touch.clientX - rect.left
@@ -718,6 +797,86 @@ export default function Map({
       map.current.setLayoutProperty('devices-heat', 'visibility', showHeat ? 'visible' : 'none')
   }, [ready, deviceMode])
 
+  // ── Device trail rendering (time-filtered movement) ─────────
+  const TRAIL_COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+  useEffect(() => {
+    if (!ready) return
+    const emptyFC = { type: 'FeatureCollection', features: [] }
+    const trailSrc  = map.current.getSource('device-trail')
+    const pointsSrc = map.current.getSource('device-trail-points')
+    if (!trailSrc || !pointsSrc) return
+
+    if (!deviceFilterActive || !deviceTrailData?.length) {
+      trailSrc.setData(emptyFC)
+      pointsSrc.setData(emptyFC)
+      map.current.setLayoutProperty('device-trail-line', 'visibility', 'none')
+      map.current.setLayoutProperty('device-trail-points-circle', 'visibility', 'none')
+      // Restore live marker opacity
+      Object.values(deviceMarkersRef.current).forEach((m) => {
+        m.getElement().style.opacity = ''
+      })
+      return
+    }
+
+    // Group readings by device_id
+    const byDevice = {}
+    deviceTrailData.forEach((r) => {
+      if (r.lat == null || r.lng == null) return
+      if (!byDevice[r.device_id]) byDevice[r.device_id] = []
+      byDevice[r.device_id].push(r)
+    })
+
+    const deviceIds = Object.keys(byDevice)
+    const lineFeatures = []
+    const pointFeatures = []
+
+    deviceIds.forEach((did, i) => {
+      const color = TRAIL_COLORS[i % TRAIL_COLORS.length]
+      const readings = byDevice[did]
+      if (readings.length > 1) {
+        lineFeatures.push({
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: readings.map((r) => [r.lng, r.lat]),
+          },
+          properties: { device_id: did, color },
+        })
+      }
+      readings.forEach((r) => {
+        pointFeatures.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [r.lng, r.lat] },
+          properties: { device_id: did, color, received_at: r.received_at, battery_pct: r.battery_pct },
+        })
+      })
+    })
+
+    trailSrc.setData({ type: 'FeatureCollection', features: lineFeatures })
+    pointsSrc.setData({ type: 'FeatureCollection', features: pointFeatures })
+    map.current.setLayoutProperty('device-trail-line', 'visibility', 'visible')
+    map.current.setLayoutProperty('device-trail-points-circle', 'visibility', 'visible')
+
+    // Also feed trail points into heatmap source for density view
+    map.current.getSource('live_devices')?.setData({ type: 'FeatureCollection', features: pointFeatures })
+
+    // Dim live markers while trail is shown
+    Object.values(deviceMarkersRef.current).forEach((m) => {
+      m.getElement().style.opacity = '0.15'
+    })
+
+    // Fit bounds to trail
+    if (pointFeatures.length > 0) {
+      const coords = pointFeatures.map((f) => f.geometry.coordinates)
+      const lngs = coords.map((c) => c[0])
+      const lats = coords.map((c) => c[1])
+      map.current.fitBounds(
+        [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+        { padding: 60, duration: 800 }
+      )
+    }
+  }, [ready, deviceTrailData, deviceFilterActive])
+
   // ── Realtime: update device positions on new sensor reading ───
   useEffect(() => {
     if (!ready) return
@@ -822,8 +981,9 @@ export default function Map({
 
         if (!deviceMarkersRef.current[d.id]) {
           injectDeviceCss()
+          const isRouting = d.device_type_category === 'routing'
           const el = document.createElement('div')
-          el.className = `device-dot ${status}`
+          el.className = `${isRouting ? 'routing-dot' : 'device-dot'} ${status}`
           el.addEventListener('click', () => {
             onFeatureClickRef.current?.({ featureType: 'device', data: deviceDataRef.current[d.id] ?? { ...d, status } })
           })
@@ -833,7 +993,8 @@ export default function Map({
         } else {
           const marker = deviceMarkersRef.current[d.id]
           marker.setLngLat([d.lng, d.lat])
-          marker.getElement().className = `device-dot ${status}`
+          const isRouting = d.device_type_category === 'routing'
+          marker.getElement().className = `${isRouting ? 'routing-dot' : 'device-dot'} ${status}`
         }
         const el = deviceMarkersRef.current[d.id].getElement()
         const hide = !visible || deviceModeRef.current === 'hidden'

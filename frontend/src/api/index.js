@@ -649,6 +649,54 @@ export const api = {
     return data
   },
 
+  // Time-filtered readings for multiple devices (ascending for trail drawing)
+  async getDeviceReadingsForDevices(deviceIds, from, to, limit = 5000) {
+    let q = supabase
+      .from('sensor_readings')
+      .select('id, device_id, received_at, lat, lng, battery_pct, rssi, snr, extra')
+      .in('device_id', deviceIds)
+      .not('lat', 'is', null)
+      .order('received_at', { ascending: true })
+    if (from) q = q.gte('received_at', from)
+    if (to) q = q.lte('received_at', to)
+    if (limit) q = q.limit(limit)
+    const { data, error } = await q
+    if (error) throw error
+    return data
+  },
+
+  // Routing devices (gateways, starlinks, relays)
+  async getRoutingDevices() {
+    const { data, error } = await supabase
+      .from('devices')
+      .select('*, device_types!inner(name, category, icon)')
+      .eq('device_types.category', 'routing')
+      .order('last_seen_at', { ascending: false, nullsFirst: false })
+    if (error) throw error
+    return data
+  },
+
+  // Routing log: which end devices pinged through a given routing device
+  async getRoutingLog(gatewayEui, limit = 50) {
+    const { data, error } = await supabase
+      .from('routing_log')
+      .select('*')
+      .eq('gateway_id', gatewayEui)
+      .order('received_at', { ascending: false })
+      .limit(limit)
+    if (error) throw error
+    return data
+  },
+
+  // Manual placement of a device on the map (primarily for routing devices)
+  async updateDeviceLocation(id, { lat, lng }) {
+    const { error } = await supabase
+      .from('devices')
+      .update({ last_lat: lat, last_lng: lng })
+      .eq('id', id)
+    if (error) throw error
+  },
+
   // ---------------------------------------------------------------
   // Deletes
   // ---------------------------------------------------------------

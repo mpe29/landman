@@ -84,6 +84,10 @@ Deno.serve(async (req: Request) => {
     // ── Parse normalised fields (device-type-specific) ────────────
     const parsed = parsePayload(body, device.device_type_id)
 
+    // ── Extract gateway info from rx_metadata ─────────────────────
+    const gatewayIds = extractGatewayIds(body)
+    const primaryGateway = gatewayIds[0]?.gatewayId ?? null
+
     // ── Insert sensor reading ─────────────────────────────────────
     // raw is always stored; parsed fields may be null if type unknown.
     const { error: readingErr } = await supabase
@@ -99,12 +103,60 @@ Deno.serve(async (req: Request) => {
         rssi:        parsed.rssi   ?? null,
         snr:         parsed.snr    ?? null,
         extra:       parsed.extra  ?? null,
+        gateway_id:  primaryGateway,
       })
 
     if (readingErr) {
       console.error('ingest: failed to insert reading', readingErr)
     } else {
-      console.log(`ingest: saved reading for device ${devEui} (${device.active ? 'active' : 'unregistered'})`)
+      console.log(`ingest: saved reading for device ${devEui} (${device.active ? 'active' : 'unregistered'})${primaryGateway ? ` via gw ${primaryGateway}` : ''}`)
+    }
+
+    // ── Auto-discover routing devices (gateways) from rx_metadata ─
+    if (gatewayIds.length > 0) {
+      // Look up the 'LoRaWAN Gateway' routing device type (cached per warm instance)
+      if (!_routingTypeId) {
+        const { data: gwType } = await supabase
+          .from('device_types')
+          .select('id')
+          .eq('category', 'routing')
+          .eq('protocol', 'lorawan')
+          .maybeSingle()
+        _routingTypeId = gwType?.id ?? null
+      }
+
+      for (const gw of gatewayIds) {
+        // Skip if we've already seen this gateway in this warm instance
+        if (_knownGateways.has(gw.gatewayId)) continue
+
+        const { data: existing } = await supabase
+          .from('devices')
+          .select('id')
+          .eq('dev_eui', gw.gatewayId)
+          .maybeSingle()
+
+        if (!existing) {
+          const { error: gwErr } = await supabase
+            .from('devices')
+            .insert({
+              dev_eui: gw.gatewayId,
+              device_type_id: _routingTypeId,
+              name: `Gateway ${gw.gatewayId.slice(-6).toUpperCase()}`,
+              active: false,
+              metadata: {
+                auto_registered: true,
+                first_seen: new Date().toISOString(),
+                source: 'rx_metadata',
+              },
+            })
+          if (gwErr && gwErr.code !== '23505') { // 23505 = unique violation (race)
+            console.error(`ingest: failed to auto-register gateway ${gw.gatewayId}`, gwErr)
+          } else {
+            console.log(`ingest: auto-discovered gateway ${gw.gatewayId}`)
+          }
+        }
+        _knownGateways.add(gw.gatewayId)
+      }
     }
 
     return new Response('ok', { status: 200 })
@@ -114,6 +166,11 @@ Deno.serve(async (req: Request) => {
     return new Response('ok', { status: 200 })  // always 200
   }
 })
+
+
+// ── Module-level cache for gateway discovery (persists across warm invocations)
+let _knownGateways = new Set<string>()
+let _routingTypeId: string | null = null
 
 
 // ── dev_eui extraction ──────────────────────────────────────────────────────
@@ -138,10 +195,41 @@ function extractDevEui(body: Record<string, unknown>): string | null {
 }
 
 
+// ── Gateway extraction ──────────────────────────────────────────────────────
+// Parses rx_metadata from TTN uplinks to identify which gateways relayed
+// the message. Returns sorted by RSSI descending (strongest first).
+
+interface GatewayInfo {
+  gatewayId: string
+  rssi: number | null
+  snr: number | null
+}
+
+function extractGatewayIds(body: Record<string, unknown>): GatewayInfo[] {
+  const ttnData = body?.data as Record<string, unknown> | undefined
+  const ttnMsg  = (ttnData?.uplink_message ?? body?.uplink_message) as Record<string, unknown> | undefined
+  const rxMeta  = ttnMsg?.rx_metadata as Record<string, unknown>[] | undefined
+  if (!rxMeta?.length) return []
+
+  return rxMeta
+    .filter((m) => m?.gateway_ids)
+    .map((m) => {
+      const gwIds = m.gateway_ids as Record<string, unknown>
+      return {
+        gatewayId: String(gwIds.gateway_id ?? gwIds.eui ?? '').toLowerCase(),
+        rssi: m.rssi != null ? Number(m.rssi) : null,
+        snr: m.snr != null ? Number(m.snr) : null,
+      }
+    })
+    .filter((g) => g.gatewayId)
+    .sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999)) // strongest first
+}
+
+
 // ── Payload parsers ─────────────────────────────────────────────────────────
-// One block per device type. device_type_id is the UUID from the device_types
-// table. Keep this list short — one parser per hardware model is enough.
-// All fields are optional; return null for anything not present.
+// Pattern-matched by decoded_payload field names so auto-registered devices
+// (no type yet) still parse correctly. Ordered most-specific first.
+// Field names sourced from TTN Device Repository codec YAML definitions.
 
 interface ParsedReading {
   device_time?: string | null
@@ -151,6 +239,13 @@ interface ParsedReading {
   rssi?:        number | null
   snr?:         number | null
   extra?:       Record<string, unknown> | null
+}
+
+// Helper: estimate battery % from Dragino voltage (typical 2.5–3.6V range)
+function draginoBatPct(dp: Record<string, unknown>): number | null {
+  const v = dp?.Bat != null ? Number(dp.Bat) : null
+  if (v == null) return null
+  return Math.min(Math.round(((v - 2.5) / 1.1) * 100), 100)
 }
 
 function parsePayload(body: Record<string, unknown>, deviceTypeId: string | null): ParsedReading {
@@ -167,59 +262,149 @@ function parsePayload(body: Record<string, unknown>, deviceTypeId: string | null
   // Decoded payload from TTN codec (device firmware + TTN formatter)
   const dp = ttnMsg?.decoded_payload as Record<string, unknown> | undefined
 
-  // ── Seeed SenseCAP T1000-E ─────────────────────────────────────
-  // Real T1000 decoded_payload fields:
-  //   lat, lon (float, degrees) — present when has_fix=true
-  //   battery_pct (integer 0-100)
-  //   ic_temp_c (float, internal chip temperature)
-  //   has_fix (boolean)
   if (dp) {
-    // Prefer GPS fix from decoded payload
-    const hasFix = dp?.has_fix === true
-    let lat: number | null = null
-    let lng: number | null = null
-
-    if (hasFix) {
-      lat = dp?.lat != null ? Number(dp.lat) : null
-      lng = dp?.lon != null ? Number(dp.lon) : null
-    }
-
-    // Fallback: TTN network-estimated location (geolocation service)
-    // Present in uplink_message.locations["frm-payload"] even when has_fix=false
-    if ((lat === null || lng === null) && ttnMsg?.locations) {
-      const locs = ttnMsg.locations as Record<string, Record<string, unknown>>
-      const frmLoc = locs?.['frm-payload']
-      if (frmLoc?.latitude != null && frmLoc?.longitude != null) {
-        lat = Number(frmLoc.latitude)
-        lng = Number(frmLoc.longitude)
-      }
-    }
-
-    const bat = dp?.battery_pct != null ? Number(dp.battery_pct) : null
-
-    if (lat !== null || lng !== null || bat !== null) {
+    // ── Dragino LSE01: soil moisture/EC/temperature ───────────────
+    // Fields: conduct_SOIL, water_SOIL, temp_SOIL, Bat (voltage)
+    if (dp.water_SOIL != null || dp.conduct_SOIL != null) {
       const extra: Record<string, unknown> = {}
-      if (dp.ic_temp_c   != null) extra.temperature_c = Number(dp.ic_temp_c)
-      if (dp.has_fix     != null) extra.has_fix        = dp.has_fix
-      // Preserve any other fields the codec emits
-      for (const [k, v] of Object.entries(dp)) {
-        if (!['lat', 'lon', 'battery_pct', 'ic_temp_c', 'has_fix'].includes(k)) {
-          extra[k] = v
-        }
-      }
-
+      if (dp.water_SOIL   != null) extra.soil_moisture_pct  = Number(dp.water_SOIL)
+      if (dp.temp_SOIL    != null) extra.soil_temperature_c  = Number(dp.temp_SOIL)
+      if (dp.conduct_SOIL != null) extra.soil_ec             = Number(dp.conduct_SOIL)
       return {
-        device_time: rxTime,
-        lat,
-        lng,
-        battery_pct: bat,
-        rssi,
-        snr,
+        device_time: rxTime, rssi, snr,
+        battery_pct: draginoBatPct(dp),
         extra: Object.keys(extra).length ? extra : null,
       }
     }
+
+    // ── Dragino LDDS75: water level (ultrasonic distance) ─────────
+    // Fields: distance_mm, Bat
+    if (dp.distance_mm != null) {
+      return {
+        device_time: rxTime, rssi, snr,
+        battery_pct: draginoBatPct(dp),
+        extra: { water_level_mm: Number(dp.distance_mm) },
+      }
+    }
+
+    // ── Dragino LDS02: door/gate open/close ───────────────────────
+    // Fields: DOOR_OPEN_STATUS, LAST_DOOR_OPEN_DURATION, Bat
+    if (dp.DOOR_OPEN_STATUS != null) {
+      return {
+        device_time: rxTime, rssi, snr,
+        battery_pct: draginoBatPct(dp),
+        extra: {
+          door_open: Number(dp.DOOR_OPEN_STATUS) === 1,
+          open_duration_s: dp.LAST_DOOR_OPEN_DURATION != null ? Number(dp.LAST_DOOR_OPEN_DURATION) : 0,
+        },
+      }
+    }
+
+    // ── RAK 7200 / Digitanimal: latitude/longitude style GPS ──────
+    // Fields: latitude, longitude, battery (0-100)
+    if (dp.latitude != null && dp.longitude != null) {
+      const extra: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(dp)) {
+        if (!['latitude', 'longitude', 'battery'].includes(k)) extra[k] = v
+      }
+      return {
+        device_time: rxTime, rssi, snr,
+        lat: Number(dp.latitude),
+        lng: Number(dp.longitude),
+        battery_pct: dp.battery != null ? Number(dp.battery) : null,
+        extra: Object.keys(extra).length ? extra : null,
+      }
+    }
+
+    // ── Dragino LHT65N / Browan / LSN50v2: temp & humidity ────────
+    // Fields: TempC_SHT, Hum_SHT, Bat
+    if (dp.TempC_SHT != null || dp.Hum_SHT != null) {
+      const extra: Record<string, unknown> = {}
+      if (dp.TempC_SHT != null) extra.temperature_c = Number(dp.TempC_SHT)
+      if (dp.Hum_SHT   != null) extra.humidity_pct  = Number(dp.Hum_SHT)
+      return {
+        device_time: rxTime, rssi, snr,
+        battery_pct: draginoBatPct(dp),
+        extra: Object.keys(extra).length ? extra : null,
+      }
+    }
+
+    // ── Weather station: wind, rain, solar ────────────────────────
+    // Fields: wind_speed, rainfall, solar_radiation, temperature, humidity
+    if (dp.wind_speed != null || dp.rainfall != null) {
+      const extra: Record<string, unknown> = {}
+      if (dp.wind_speed       != null) extra.wind_speed_kmh  = Number(dp.wind_speed)
+      if (dp.rainfall         != null) extra.rainfall_mm      = Number(dp.rainfall)
+      if (dp.solar_radiation  != null) extra.solar_radiation   = Number(dp.solar_radiation)
+      if (dp.temperature      != null) extra.temperature_c     = Number(dp.temperature)
+      if (dp.humidity         != null) extra.humidity_pct       = Number(dp.humidity)
+      return {
+        device_time: rxTime, rssi, snr,
+        extra: Object.keys(extra).length ? extra : null,
+      }
+    }
+
+    // ── Trail camera: motion events ───────────────────────────────
+    // Fields: motion, trigger_count
+    if (dp.motion != null || dp.trigger_count != null) {
+      const extra: Record<string, unknown> = {}
+      if (dp.motion        != null) extra.motion_detected = Boolean(dp.motion)
+      if (dp.trigger_count != null) extra.trigger_count    = Number(dp.trigger_count)
+      return {
+        device_time: rxTime, rssi, snr,
+        extra: Object.keys(extra).length ? extra : null,
+      }
+    }
+
+    // ── Seeed SenseCAP T1000-E ───────────────────────────────────
+    // Fields: has_fix, lat, lon, battery_pct, ic_temp_c
+    if (dp.has_fix != null || dp.battery_pct != null) {
+      const hasFix = dp.has_fix === true
+      let lat: number | null = null
+      let lng: number | null = null
+
+      if (hasFix) {
+        lat = dp.lat != null ? Number(dp.lat) : null
+        lng = dp.lon != null ? Number(dp.lon) : null
+      }
+
+      // Fallback: TTN network-estimated location
+      if ((lat === null || lng === null) && ttnMsg?.locations) {
+        const locs = ttnMsg.locations as Record<string, Record<string, unknown>>
+        const frmLoc = locs?.['frm-payload']
+        if (frmLoc?.latitude != null && frmLoc?.longitude != null) {
+          lat = Number(frmLoc.latitude)
+          lng = Number(frmLoc.longitude)
+        }
+      }
+
+      const bat = dp.battery_pct != null ? Number(dp.battery_pct) : null
+
+      if (lat !== null || lng !== null || bat !== null) {
+        const extra: Record<string, unknown> = {}
+        if (dp.ic_temp_c != null) extra.temperature_c = Number(dp.ic_temp_c)
+        if (dp.has_fix   != null) extra.has_fix       = dp.has_fix
+        for (const [k, v] of Object.entries(dp)) {
+          if (!['lat', 'lon', 'battery_pct', 'ic_temp_c', 'has_fix'].includes(k)) {
+            extra[k] = v
+          }
+        }
+        return {
+          device_time: rxTime, lat, lng,
+          battery_pct: bat, rssi, snr,
+          extra: Object.keys(extra).length ? extra : null,
+        }
+      }
+    }
+
+    // ── Generic: unknown device with decoded_payload ──────────────
+    // Store all decoded fields in extra for manual inspection
+    if (Object.keys(dp).length > 0) {
+      const extra: Record<string, unknown> = { ...dp }
+      return { device_time: rxTime, rssi, snr, extra }
+    }
   }
 
-  // ── Unknown / raw only ────────────────────────────────────────
+  // ── No decoded payload / raw only ──────────────────────────────
   return { device_time: rxTime, rssi, snr }
 }
