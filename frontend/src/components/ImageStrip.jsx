@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { T, C } from '../constants/theme'
+import { thumbUrl } from '../utils/thumbUrl'
 
 // Hide scrollbar (CSS-in-JS can't target ::-webkit-scrollbar)
 let stripCssInjected = false
@@ -94,7 +95,11 @@ export default function ImageStrip({ observations, selectedObsId, onSelect, onIm
                   }}
                   onMouseLeave={() => { setHoveredId(null); onHover?.(null) }}
                 >
-                  <img src={obs.image_url} alt="" style={s.img} loading="lazy" />
+                  <img
+                    src={thumbUrl(obs.image_url)}
+                    onError={(e) => { if (e.target.src !== obs.image_url) e.target.src = obs.image_url }}
+                    alt="" style={s.img} loading="lazy"
+                  />
                   <div style={s.dateBadge}>{dateStr}</div>
                   {isSelected && <div style={s.selectedBorder} />}
                 </div>

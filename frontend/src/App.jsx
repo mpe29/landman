@@ -61,9 +61,13 @@ export default function App() {
   const [showObsModal, setShowObsModal]     = useState(false)
   const [operations, setOperations]         = useState([])
   const [openPanel, setOpenPanel]           = useState(null)
-  const [layerVisibility, setLayerVisibility] = useState(() =>
-    ({ ...DEFAULT_VISIBILITY, ...loadLS('landman_layer_visibility', {}) })
-  )
+  const [layerVisibility, setLayerVisibility] = useState(() => {
+    const saved = loadLS('landman_layer_visibility', {})
+    // ownPanel layers (observations, devices) have their own visibility toggles;
+    // discard any stale localStorage overrides so they always start visible.
+    ACTIVE_LAYERS.filter((l) => l.ownPanel).forEach((l) => { delete saved[l.id] })
+    return { ...DEFAULT_VISIBILITY, ...saved }
+  })
   const [homeView, setHomeView]   = useState(() => loadLS('landman_home_view', null))
   const [obsFilter, setObsFilter] = useState(() => loadLS('landman_obs_filter', DEFAULT_OBS_FILTER))
   const [obsMode, setObsMode]       = useState('individual')
