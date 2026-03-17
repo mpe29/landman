@@ -36,13 +36,21 @@ function timeAgo(ts) {
 function DeviceFeaturePanel({ data, onClose }) {
   const [readings, setReadings] = useState([])
   const [loading,  setLoading]  = useState(true)
+  const isRouting = data.device_type_category === 'routing'
 
   useEffect(() => {
     setLoading(true)
-    api.getDeviceReadings(data.id, 20)
-      .then(setReadings)
-      .catch(console.error)
-      .finally(() => setLoading(false))
+    if (isRouting) {
+      api.getRoutingLog(data.dev_eui, 20)
+        .then(setReadings)
+        .catch(console.error)
+        .finally(() => setLoading(false))
+    } else {
+      api.getDeviceReadings(data.id, 20)
+        .then(setReadings)
+        .catch(console.error)
+        .finally(() => setLoading(false))
+    }
   }, [data.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const age    = data.last_seen_at ? Date.now() - new Date(data.last_seen_at).getTime() : Infinity
@@ -51,10 +59,10 @@ function DeviceFeaturePanel({ data, onClose }) {
   return (
     <div style={styles.panel}>
       {/* Header */}
-      <div style={{ ...styles.header, borderLeftColor: STATUS_COLOR[status] }}>
+      <div style={{ ...styles.header, borderLeftColor: isRouting ? '#6366f1' : STATUS_COLOR[status] }}>
         <div>
-          <span style={{ ...styles.badge, color: STATUS_COLOR[status], borderColor: `${STATUS_COLOR[status]}35` }}>
-            {STATUS_LABEL[status]}
+          <span style={{ ...styles.badge, color: isRouting ? '#6366f1' : STATUS_COLOR[status], borderColor: `${isRouting ? '#6366f1' : STATUS_COLOR[status]}35` }}>
+            {isRouting ? 'ROUTING' : STATUS_LABEL[status]}
           </span>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginTop: 4 }}>
             {data.device_type_icon ? `${data.device_type_icon} ` : ''}{data.name}
@@ -69,50 +77,71 @@ function DeviceFeaturePanel({ data, onClose }) {
       {/* Status row */}
       <div style={dv.statusRow}>
         {data.battery_pct != null && (
-          <span style={dv.pill}>🔋 {data.battery_pct}%</span>
+          <span style={dv.pill}>{data.battery_pct}%</span>
         )}
         {data.last_seen_at && (
-          <span style={dv.pill}>🕐 {timeAgo(data.last_seen_at)}</span>
+          <span style={dv.pill}>{timeAgo(data.last_seen_at)}</span>
         )}
         {data.lat != null && (
-          <span style={dv.pill}>📍 {Number(data.lat).toFixed(4)}, {Number(data.lng).toFixed(4)}</span>
+          <span style={dv.pill}>{Number(data.lat).toFixed(4)}, {Number(data.lng).toFixed(4)}</span>
         )}
         {data.area_name && (
-          <span style={dv.pill}>📌 {data.area_name}</span>
+          <span style={dv.pill}>{data.area_name}</span>
         )}
       </div>
 
       {/* EUI */}
       <div style={dv.eui}>{data.dev_eui?.toUpperCase()}</div>
 
-      {/* Readings log */}
+      {/* Readings log or Routing log */}
       <div style={dv.logSection}>
-        <div style={dv.logTitle}>Recent Readings</div>
+        <div style={dv.logTitle}>{isRouting ? 'Routing Log' : 'Recent Readings'}</div>
         {loading && <div style={dv.muted}>Loading…</div>}
-        {!loading && readings.length === 0 && <div style={dv.muted}>No readings yet</div>}
+        {!loading && readings.length === 0 && (
+          <div style={dv.muted}>{isRouting ? 'No readings relayed yet' : 'No readings yet'}</div>
+        )}
         <div style={dv.logScroll}>
-          {readings.map((r) => {
-            const hasGps = r.lat != null && r.lng != null
-            const t = new Date(r.received_at)
-            const timeStr = t.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' })
-              + ' ' + t.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })
-            return (
-              <div key={r.id} style={dv.logRow}>
-                <div style={dv.logTime}>{timeStr}</div>
-                <div style={dv.logFields}>
-                  {r.battery_pct != null && <span>🔋{r.battery_pct}%</span>}
-                  {r.rssi        != null && <span>{r.rssi} dBm</span>}
-                  {r.snr         != null && <span>SNR {r.snr}</span>}
-                  {r.extra?.temperature_c != null && <span>{r.extra.temperature_c}°C</span>}
-                  <span style={{ color: hasGps ? '#22c55e' : T.textMuted }}>
-                    {hasGps
-                      ? `GPS ${r.lat.toFixed(4)}, ${r.lng.toFixed(4)}`
-                      : 'No GPS fix'}
-                  </span>
+          {isRouting ? (
+            readings.map((r) => {
+              const t = new Date(r.received_at)
+              const timeStr = t.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' })
+                + ' ' + t.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })
+              return (
+                <div key={r.reading_id} style={dv.logRow}>
+                  <div style={dv.logTime}>{timeStr}</div>
+                  <div style={dv.logFields}>
+                    <span style={{ fontWeight: 600 }}>{r.device_name}</span>
+                    <span style={{ fontFamily: 'monospace', fontSize: 10 }}>{r.device_eui?.slice(-8).toUpperCase()}</span>
+                    {r.rssi != null && <span>{r.rssi} dBm</span>}
+                    {r.snr  != null && <span>SNR {r.snr}</span>}
+                  </div>
                 </div>
-              </div>
-            )
-          })}
+              )
+            })
+          ) : (
+            readings.map((r) => {
+              const hasGps = r.lat != null && r.lng != null
+              const t = new Date(r.received_at)
+              const timeStr = t.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' })
+                + ' ' + t.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })
+              return (
+                <div key={r.id} style={dv.logRow}>
+                  <div style={dv.logTime}>{timeStr}</div>
+                  <div style={dv.logFields}>
+                    {r.battery_pct != null && <span>{r.battery_pct}%</span>}
+                    {r.rssi        != null && <span>{r.rssi} dBm</span>}
+                    {r.snr         != null && <span>SNR {r.snr}</span>}
+                    {r.extra?.temperature_c != null && <span>{r.extra.temperature_c}°C</span>}
+                    <span style={{ color: hasGps ? '#22c55e' : T.textMuted }}>
+                      {hasGps
+                        ? `GPS ${r.lat.toFixed(4)}, ${r.lng.toFixed(4)}`
+                        : 'No GPS fix'}
+                    </span>
+                  </div>
+                </div>
+              )
+            })
+          )}
         </div>
       </div>
     </div>

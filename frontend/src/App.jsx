@@ -74,6 +74,14 @@ export default function App() {
   const [deviceMode, setDeviceMode] = useState('individual')
   const [tagTypes, setTagTypes]     = useState([])
 
+  // ── Device filter / trail state ─────────────────────────────────
+  const [deviceFilter, setDeviceFilter] = useState({
+    deviceIds: [], range: 'today', hourFrom: 6, hourTo: 18,
+  })
+  const [deviceTrailData, setDeviceTrailData]       = useState([])
+  const [deviceFilterActive, setDeviceFilterActive] = useState(false)
+  const [placingRouting, setPlacingRouting]          = useState(null) // device to place
+
   // ── Viewport observations (for ImageStrip) ─────────────────
   const [viewportObs, setViewportObs] = useState([])
   const [lightboxObs, setLightboxObs] = useState(null)
@@ -242,6 +250,48 @@ export default function App() {
   const cycleObs    = () => setObsMode((m) => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
   const cycleDevice = () => setDeviceMode((m) => m === 'individual' ? 'heatmap' : m === 'heatmap' ? 'hidden' : 'individual')
 
+  // ── Device filter handlers ──────────────────────────────────────
+  const handleDeviceFilterApply = async () => {
+    if (!deviceFilter.deviceIds.length) return
+    const now = new Date()
+    let from, to
+    if (deviceFilter.range === 'today') {
+      from = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+      to = now.toISOString()
+    } else if (deviceFilter.range === '7d') {
+      from = new Date(now.getTime() - 7 * 86400000).toISOString()
+      to = now.toISOString()
+    } else {
+      from = new Date(now.getTime() - 30 * 86400000).toISOString()
+      to = now.toISOString()
+    }
+    try {
+      const readings = await api.getDeviceReadingsForDevices(deviceFilter.deviceIds, from, to)
+      // Client-side time-of-day filter
+      const hourFrom = deviceFilter.hourFrom ?? 0
+      const hourTo = deviceFilter.hourTo ?? 24
+      const filtered = readings.filter((r) => {
+        const h = new Date(r.received_at).getHours()
+        return hourFrom <= hourTo ? (h >= hourFrom && h < hourTo) : (h >= hourFrom || h < hourTo)
+      })
+      setDeviceTrailData(filtered)
+      setDeviceFilterActive(true)
+    } catch (err) {
+      console.error('Device filter failed:', err)
+    }
+  }
+
+  const handleDeviceFilterClear = () => {
+    setDeviceTrailData([])
+    setDeviceFilterActive(false)
+  }
+
+  // ── Routing device placement ────────────────────────────────────
+  const handlePlaceRouting = (device) => {
+    setPlacingRouting(device)
+    setSelectedFeature(null)
+  }
+
   const handleAddTagType = async (name, emoji, color) => {
     const propertyId = loadedData.properties[0]?.id
     const created = await api.createObservationTagType({ propertyId, name, emoji, color })
@@ -288,9 +338,28 @@ export default function App() {
   const handleDataLoaded   = (data) => setLoadedData(data)
 
   const handleFeatureClick = (feature) => {
+    // If placing a routing device, use the click coordinates
+    if (placingRouting && feature?.data) {
+      const lat = feature.data.lat ?? feature.data.geom?.coordinates?.[1]
+      const lng = feature.data.lng ?? feature.data.geom?.coordinates?.[0]
+      if (lat != null && lng != null) {
+        api.updateDeviceLocation(placingRouting.id, { lat, lng })
+          .then(() => { setPlacingRouting(null); reload() })
+          .catch((err) => alert('Placement failed: ' + err.message))
+        return
+      }
+    }
     if (mode !== 'view') return
     setSelectedFeature(feature)
   }
+
+  // Handle raw map click for routing placement (when no feature is clicked)
+  const handleMapClickForPlacement = useCallback((lngLat) => {
+    if (!placingRouting) return
+    api.updateDeviceLocation(placingRouting.id, { lat: lngLat.lat, lng: lngLat.lng })
+      .then(() => { setPlacingRouting(null); reload() })
+      .catch((err) => alert('Placement failed: ' + err.message))
+  }, [placingRouting]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveArea = async ({ name, owner, parentId }) => {
     if (!pendingGeometry) return
@@ -391,7 +460,23 @@ export default function App() {
         selectedObsId={selectedFeature?.featureType === 'observation' ? selectedFeature.data?.id : null}
         obsMode={obsMode}
         deviceMode={deviceMode}
+        deviceTrailData={deviceTrailData}
+        deviceFilterActive={deviceFilterActive}
+        onMapClick={placingRouting ? handleMapClickForPlacement : null}
       />
+
+      {/* ── Routing placement banner ── */}
+      {placingRouting && (
+        <div style={placementBanner}>
+          Click the map to place <strong>{placingRouting.name}</strong>
+          <button
+            onClick={() => setPlacingRouting(null)}
+            style={{ marginLeft: 12, background: 'none', border: '1px solid #fff4', borderRadius: 4, color: '#fff', cursor: 'pointer', padding: '2px 8px', fontFamily: 'inherit', fontSize: 11 }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
 
       {/* ── Top-left: app menu ── */}
       <MainMenu
@@ -432,6 +517,13 @@ export default function App() {
           <DevicesPanel
             isOpen={openPanel === 'devices'}
             onOpen={() => handlePanelOpen('devices')}
+            deviceFilter={deviceFilter}
+            onFilterChange={setDeviceFilter}
+            onFilterApply={handleDeviceFilterApply}
+            onFilterClear={handleDeviceFilterClear}
+            deviceFilterActive={deviceFilterActive}
+            onPlaceRouting={handlePlaceRouting}
+            areas={loadedData.camps || []}
           />
           <button
             style={{ ...heatBtnStyle, ...(deviceMode !== 'hidden' ? devBtnOnStyle : dimBtnStyle) }}
@@ -623,6 +715,14 @@ const ebBar = {
     borderRadius: 6, color: T.textOnDark, fontSize: 12, fontWeight: 700,
     padding: '6px 14px', cursor: 'pointer', fontFamily: 'inherit',
   },
+}
+
+const placementBanner = {
+  position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+  zIndex: 20, background: 'rgba(99,102,241,0.9)', color: '#fff',
+  padding: '8px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+  boxShadow: '0 2px 12px rgba(0,0,0,0.25)', display: 'flex', alignItems: 'center',
+  backdropFilter: 'blur(6px)',
 }
 
 const stackStyle = {
