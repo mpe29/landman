@@ -2,10 +2,12 @@
 -- RPC endpoints called via Supabase .rpc() for spatial inserts.
 -- PostgREST cannot invoke ST_GeomFromGeoJSON() inline on INSERT,
 -- so spatial writes go through these functions instead.
--- All functions return json with geometry already converted to GeoJSON.
+-- All functions include created_by = auth.uid() for audit trail.
 
 -- ---------------------------------------------------------------
 -- Properties
+-- Sets owner_id to the authenticated user and auto-creates a
+-- property_members row with role=owner, is_admin=TRUE.
 -- ---------------------------------------------------------------
 CREATE OR REPLACE FUNCTION create_property(
     p_name        text,
@@ -16,10 +18,11 @@ RETURNS json AS $$
 DECLARE
     r properties;
 BEGIN
-    INSERT INTO properties (name, owner, boundary)
+    INSERT INTO properties (name, owner, owner_id, boundary)
     VALUES (
         p_name,
         p_owner,
+        auth.uid(),
         CASE WHEN p_boundary IS NOT NULL
             THEN ST_SetSRID(ST_GeomFromGeoJSON(p_boundary::text), 4326)
             ELSE NULL
@@ -27,10 +30,15 @@ BEGIN
     )
     RETURNING * INTO r;
 
+    -- Auto-create membership for the owner
+    INSERT INTO property_members (property_id, user_id, role, is_admin, status)
+    VALUES (r.id, auth.uid(), 'owner', TRUE, 'approved');
+
     RETURN json_build_object(
         'id',         r.id,
         'name',       r.name,
         'owner',      r.owner,
+        'owner_id',   r.owner_id,
         'created_at', r.created_at,
         'boundary',   CASE WHEN r.boundary IS NOT NULL
                           THEN ST_AsGeoJSON(r.boundary)::json
@@ -38,11 +46,10 @@ BEGIN
                       END
     );
 END;
-$$ LANGUAGE plpgsql VOLATILE;
+$$ LANGUAGE plpgsql VOLATILE SECURITY DEFINER;
 
 -- ---------------------------------------------------------------
 -- Areas (farms, camps, paddocks, habitat zones, etc.)
--- Includes parent_id and level for hierarchy support.
 -- ---------------------------------------------------------------
 CREATE OR REPLACE FUNCTION create_area(
     p_property_id uuid,
@@ -57,7 +64,7 @@ RETURNS json AS $$
 DECLARE
     r areas;
 BEGIN
-    INSERT INTO areas (property_id, parent_id, level, name, type, notes, boundary)
+    INSERT INTO areas (property_id, parent_id, level, name, type, notes, boundary, created_by)
     VALUES (
         p_property_id,
         p_parent_id,
@@ -68,7 +75,8 @@ BEGIN
         CASE WHEN p_boundary IS NOT NULL
             THEN ST_SetSRID(ST_GeomFromGeoJSON(p_boundary::text), 4326)
             ELSE NULL
-        END
+        END,
+        auth.uid()
     )
     RETURNING * INTO r;
 
@@ -81,6 +89,7 @@ BEGIN
         'type',        r.type,
         'notes',       r.notes,
         'area_ha',     r.area_ha,
+        'created_by',  r.created_by,
         'created_at',  r.created_at,
         'boundary',    CASE WHEN r.boundary IS NOT NULL
                            THEN ST_AsGeoJSON(r.boundary)::json
@@ -105,7 +114,7 @@ RETURNS json AS $$
 DECLARE
     r linear_assets;
 BEGIN
-    INSERT INTO linear_assets (property_id, name, type, condition, notes, geom)
+    INSERT INTO linear_assets (property_id, name, type, condition, notes, geom, created_by)
     VALUES (
         p_property_id,
         p_name,
@@ -115,7 +124,8 @@ BEGIN
         CASE WHEN p_geom IS NOT NULL
             THEN ST_SetSRID(ST_GeomFromGeoJSON(p_geom::text), 4326)
             ELSE NULL
-        END
+        END,
+        auth.uid()
     )
     RETURNING * INTO r;
 
@@ -126,6 +136,7 @@ BEGIN
         'type',        r.type,
         'condition',   r.condition,
         'notes',       r.notes,
+        'created_by',  r.created_by,
         'created_at',  r.created_at,
         'geom',        CASE WHEN r.geom IS NOT NULL
                            THEN ST_AsGeoJSON(r.geom)::json
@@ -150,7 +161,7 @@ RETURNS json AS $$
 DECLARE
     r point_assets;
 BEGIN
-    INSERT INTO point_assets (property_id, name, type, condition, notes, geom)
+    INSERT INTO point_assets (property_id, name, type, condition, notes, geom, created_by)
     VALUES (
         p_property_id,
         p_name,
@@ -160,7 +171,8 @@ BEGIN
         CASE WHEN p_geom IS NOT NULL
             THEN ST_SetSRID(ST_GeomFromGeoJSON(p_geom::text), 4326)
             ELSE NULL
-        END
+        END,
+        auth.uid()
     )
     RETURNING * INTO r;
 
@@ -171,6 +183,7 @@ BEGIN
         'type',        r.type,
         'condition',   r.condition,
         'notes',       r.notes,
+        'created_by',  r.created_by,
         'created_at',  r.created_at,
         'geom',        CASE WHEN r.geom IS NOT NULL
                            THEN ST_AsGeoJSON(r.geom)::json
@@ -182,50 +195,104 @@ $$ LANGUAGE plpgsql VOLATILE;
 
 -- ---------------------------------------------------------------
 -- Observations
--- Field photos with EXIF-extracted GPS + timestamp.
--- Linked optionally to an operation (event/campaign).
+-- Latest version with bearing + image_hash + created_by
 -- ---------------------------------------------------------------
 CREATE OR REPLACE FUNCTION create_observation(
-    p_property_id  uuid,
-    p_operation_id uuid      DEFAULT NULL,
-    p_geom         json      DEFAULT NULL,
-    p_observed_at  timestamptz DEFAULT NOW(),
-    p_type         text      DEFAULT NULL,
-    p_notes        text      DEFAULT NULL,
-    p_image_url    text      DEFAULT NULL
+    p_property_id  UUID,
+    p_operation_id UUID        DEFAULT NULL,
+    p_geom         JSONB       DEFAULT NULL,
+    p_observed_at  TIMESTAMPTZ DEFAULT NOW(),
+    p_type         TEXT        DEFAULT NULL,
+    p_notes        TEXT        DEFAULT NULL,
+    p_image_url    TEXT        DEFAULT NULL,
+    p_bearing      INTEGER     DEFAULT NULL,
+    p_image_hash   TEXT        DEFAULT NULL
 )
-RETURNS json AS $$
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
 DECLARE
-    r observations;
+    v_id UUID;
 BEGIN
-    INSERT INTO observations (property_id, operation_id, geom, observed_at, type, notes, image_url)
-    VALUES (
+    INSERT INTO observations (
+        property_id, operation_id, geom,
+        observed_at, type, notes, image_url, bearing, image_hash, created_by
+    ) VALUES (
         p_property_id,
         p_operation_id,
         CASE WHEN p_geom IS NOT NULL
             THEN ST_SetSRID(ST_GeomFromGeoJSON(p_geom::text), 4326)
             ELSE NULL
         END,
-        COALESCE(p_observed_at, NOW()),
+        p_observed_at,
         p_type,
         p_notes,
-        p_image_url
+        p_image_url,
+        p_bearing,
+        p_image_hash,
+        auth.uid()
     )
-    RETURNING * INTO r;
+    RETURNING id INTO v_id;
 
-    RETURN json_build_object(
-        'id',           r.id,
-        'property_id',  r.property_id,
-        'operation_id', r.operation_id,
-        'observed_at',  r.observed_at,
-        'type',         r.type,
-        'notes',        r.notes,
-        'image_url',    r.image_url,
-        'created_at',   r.created_at,
-        'geom',         CASE WHEN r.geom IS NOT NULL
-                            THEN ST_AsGeoJSON(r.geom)::json
-                            ELSE NULL
-                        END
-    );
+    RETURN v_id;
 END;
-$$ LANGUAGE plpgsql VOLATILE;
+$$;
+
+-- ---------------------------------------------------------------
+-- Livestock
+-- ---------------------------------------------------------------
+CREATE OR REPLACE FUNCTION create_livestock(
+    p_property_id       UUID,
+    p_camp_id           UUID    DEFAULT NULL,
+    p_livestock_type_id UUID    DEFAULT NULL,
+    p_breed_id          UUID    DEFAULT NULL,
+    p_is_group          BOOLEAN DEFAULT TRUE,
+    p_head_count        INTEGER DEFAULT 1,
+    p_sex               TEXT    DEFAULT NULL,
+    p_dob               DATE    DEFAULT NULL,
+    p_tag_number        TEXT    DEFAULT NULL,
+    p_acquired_at       DATE    DEFAULT NULL,
+    p_notes             TEXT    DEFAULT NULL
+) RETURNS UUID AS $$
+DECLARE
+    v_id UUID;
+BEGIN
+    INSERT INTO livestock (
+        property_id, camp_id, livestock_type_id, breed_id,
+        is_group, head_count, sex, dob, tag_number, acquired_at, notes, created_by
+    ) VALUES (
+        p_property_id, p_camp_id, p_livestock_type_id, p_breed_id,
+        p_is_group, p_head_count, p_sex, p_dob, p_tag_number, p_acquired_at, p_notes,
+        auth.uid()
+    )
+    RETURNING id INTO v_id;
+    RETURN v_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ---------------------------------------------------------------
+-- Livestock Events
+-- ---------------------------------------------------------------
+CREATE OR REPLACE FUNCTION create_livestock_event(
+    p_livestock_id UUID,
+    p_event_type   TEXT,
+    p_event_date   DATE    DEFAULT CURRENT_DATE,
+    p_head_count   INTEGER DEFAULT 1,
+    p_camp_from    UUID    DEFAULT NULL,
+    p_camp_to      UUID    DEFAULT NULL,
+    p_notes        TEXT    DEFAULT NULL
+) RETURNS UUID AS $$
+DECLARE
+    v_id UUID;
+BEGIN
+    INSERT INTO livestock_events (
+        livestock_id, event_type, event_date, head_count, camp_from, camp_to, notes, created_by
+    ) VALUES (
+        p_livestock_id, p_event_type, p_event_date, p_head_count, p_camp_from, p_camp_to, p_notes,
+        auth.uid()
+    )
+    RETURNING id INTO v_id;
+    RETURN v_id;
+END;
+$$ LANGUAGE plpgsql;

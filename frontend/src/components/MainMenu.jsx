@@ -5,12 +5,13 @@ const MENU_ITEMS = [
   { id: 'profile',      label: 'Profile' },
   { id: 'settings',     label: 'Settings' },
   { id: 'integrations', label: 'Integrations' },
+  { id: 'users',        label: 'User Management', adminOnly: true },
   { divider: true },
   { id: 'help',         label: 'Help' },
   { id: 'logout',       label: 'Log Out' },
 ]
 
-export default function MainMenu({ isOpen, onOpen }) {
+export default function MainMenu({ isOpen, onOpen, onLogout, isAdmin, pendingCount, onUserManagement }) {
   const ref = useRef(null)
 
   // Close on outside click
@@ -21,24 +22,34 @@ export default function MainMenu({ isOpen, onOpen }) {
     return () => document.removeEventListener('mousedown', handler)
   }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleItemClick = (item) => {
+    if (item.id === 'logout') { onLogout?.(); return }
+    if (item.id === 'users')  { onUserManagement?.(); return }
+    onOpen() // close menu for unimplemented items
+  }
+
   return (
     <div ref={ref} style={s.wrap}>
       <button style={s.trigger} onClick={onOpen}>
         <span style={s.logo}>LANDMAN</span>
+        {pendingCount > 0 && <span style={s.badge}>{pendingCount}</span>}
         <span style={{ ...s.chevron, transform: isOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
       </button>
 
       {isOpen && (
         <div style={s.dropdown}>
-          {MENU_ITEMS.map((item, i) =>
-            item.divider
-              ? <div key={i} style={s.divider} />
-              : (
-                <button key={item.id} style={s.item} onClick={onOpen}>
-                  {item.label}
-                </button>
-              )
-          )}
+          {MENU_ITEMS.map((item, i) => {
+            if (item.divider) return <div key={i} style={s.divider} />
+            if (item.adminOnly && !isAdmin) return null
+            return (
+              <button key={item.id} style={s.item} onClick={() => handleItemClick(item)}>
+                {item.label}
+                {item.id === 'users' && pendingCount > 0 && (
+                  <span style={s.menuBadge}>{pendingCount}</span>
+                )}
+              </button>
+            )
+          })}
         </div>
       )}
     </div>
@@ -55,6 +66,7 @@ const s = {
     border: `1px solid ${T.surfaceBorder}`, borderRadius: 8,
     padding: '7px 12px', boxShadow: T.surfaceShadow,
     cursor: 'pointer', fontFamily: 'inherit',
+    position: 'relative',
   },
   logo: {
     color: T.brand, fontFamily: "'Exo 2', sans-serif",
@@ -64,6 +76,14 @@ const s = {
     color: T.textFaint, fontSize: 10,
     transition: 'transform 0.15s', display: 'inline-block',
   },
+  badge: {
+    position: 'absolute', top: -5, right: -5,
+    minWidth: 16, height: 16, borderRadius: 8,
+    background: T.danger, color: '#fff',
+    fontSize: 9, fontWeight: 700,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: '0 4px',
+  },
   dropdown: {
     position: 'absolute', top: 'calc(100% + 6px)', left: 0,
     background: T.surface, backdropFilter: 'blur(10px)',
@@ -71,10 +91,18 @@ const s = {
     boxShadow: T.surfaceShadow, minWidth: 180, overflow: 'hidden',
   },
   item: {
-    display: 'block', width: '100%', padding: '9px 16px',
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    width: '100%', padding: '9px 16px',
     background: 'transparent', border: 'none',
     color: T.textMuted, fontSize: 13, fontWeight: 500, textAlign: 'left',
     cursor: 'pointer', fontFamily: 'inherit',
+  },
+  menuBadge: {
+    minWidth: 16, height: 16, borderRadius: 8,
+    background: T.danger, color: '#fff',
+    fontSize: 9, fontWeight: 700,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    padding: '0 4px',
   },
   divider: {
     height: 1, background: T.surfaceBorder, margin: '3px 0',

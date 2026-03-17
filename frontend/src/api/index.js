@@ -7,6 +7,137 @@ export const supabase = createClient(
 
 export const api = {
   // ---------------------------------------------------------------
+  // Auth
+  // ---------------------------------------------------------------
+  async signUp({ email, password, fullName }) {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { full_name: fullName } },
+    })
+    if (error) throw error
+    return data
+  },
+
+  async signIn({ email, password }) {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) throw error
+    return data
+  },
+
+  async signOut() {
+    const { error } = await supabase.auth.signOut()
+    if (error) throw error
+  },
+
+  async getSession() {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session
+  },
+
+  onAuthStateChange(callback) {
+    return supabase.auth.onAuthStateChange(callback)
+  },
+
+  async getProfile() {
+    const { data, error } = await supabase.from('profiles').select('*').single()
+    if (error) throw error
+    return data
+  },
+
+  // ---------------------------------------------------------------
+  // Memberships — current user's property access
+  // ---------------------------------------------------------------
+  async getMyMemberships() {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return []
+    const { data, error } = await supabase
+      .from('property_members')
+      .select('*, properties(id, name)')
+      .eq('user_id', user.id)
+      .eq('status', 'approved')
+    if (error) throw error
+    return data
+  },
+
+  // ---------------------------------------------------------------
+  // User Management (admin)
+  // ---------------------------------------------------------------
+  async createMember({ propertyId, fullName, role }) {
+    const { data, error } = await supabase.functions.invoke('create-member', {
+      body: { propertyId, fullName, role },
+    })
+    if (error) throw new Error(error.message || 'Failed to create member')
+    return data
+  },
+
+  async updatePin(memberId, newPin) {
+    const { data, error } = await supabase.functions.invoke('update-pin', {
+      body: { memberId, newPin: newPin || undefined },
+    })
+    if (error) throw new Error(error.message || 'Failed to update PIN')
+    return data
+  },
+
+  async getPropertyMembers(propertyId) {
+    const { data, error } = await supabase
+      .from('property_members')
+      .select('*, profiles(full_name, email)')
+      .eq('property_id', propertyId)
+      .order('created_at')
+    if (error) throw error
+    return data
+  },
+
+  async updateMemberRole(memberId, role, isAdmin) {
+    const updates = {}
+    if (role !== undefined) updates.role = role
+    if (isAdmin !== undefined) updates.is_admin = isAdmin
+    const { error } = await supabase
+      .from('property_members')
+      .update(updates)
+      .eq('id', memberId)
+    if (error) throw error
+  },
+
+  async removeMember(memberId) {
+    const { error } = await supabase
+      .from('property_members')
+      .delete()
+      .eq('id', memberId)
+    if (error) throw error
+  },
+
+  async getPendingCount(propertyId) {
+    const { count, error } = await supabase
+      .from('property_members')
+      .select('id', { count: 'exact', head: true })
+      .eq('property_id', propertyId)
+      .eq('status', 'pending')
+    if (error) throw error
+    return count || 0
+  },
+
+  // ---------------------------------------------------------------
+  // Join flow (public — resolve token to sign in)
+  // ---------------------------------------------------------------
+  async resolveJoinToken(token) {
+    const { data, error } = await supabase.functions.invoke('resolve-join', {
+      body: { token },
+    })
+    if (error) throw new Error(error.message || 'Invalid link')
+    return data
+  },
+
+  async lookupPinUser(name) {
+    const { data, error } = await supabase.functions.invoke('lookup-pin-user', {
+      body: { name },
+    })
+    if (error) throw new Error(error.message || 'Name not found')
+    return data
+  },
+
+  // ---------------------------------------------------------------
   // Reads — query the *_geo views which return GeoJSON geometry
   // ---------------------------------------------------------------
   async getProperties() {
