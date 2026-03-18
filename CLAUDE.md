@@ -8,7 +8,7 @@ Always run `git fetch origin && git checkout main && git pull origin main` befor
 
 ## 2. Environment
 
-Frontend env is at `frontend/.env` — do NOT waste tokens searching for `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, or `VITE_MAPBOX_TOKEN`. They are already there. To run locally: `cd frontend && npm run dev`.
+Frontend env vars (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_MAPBOX_TOKEN`) are defined in `frontend/.env`. This file is gitignored — on a fresh clone, copy `frontend/.env.example` and fill in the values. Do NOT waste tokens searching for these keys if the file already exists. To run locally: `cd frontend && npm run dev`.
 
 ## 3. Supabase
 
@@ -18,7 +18,7 @@ Frontend env is at `frontend/.env` — do NOT waste tokens searching for `VITE_S
 
 ## 4. Architecture Constraints
 
-- **Multi-property, multi-user schema**: all queries must respect `property_memberships` and RLS. Never assume a single property or single user.
+- **Multi-property, multi-user schema**: all queries must respect `property_members` and RLS. Never assume a single property or single user.
 - Use `user_has_property_access(property_id)` for RLS policies. Use `user_is_property_admin(property_id)` for admin-only operations.
 - All new DB functions must use `SET search_path = public`.
 - All `SECURITY DEFINER` functions need explicit `SET search_path`.
