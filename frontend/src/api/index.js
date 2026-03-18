@@ -86,6 +86,52 @@ export const api = {
     return data
   },
 
+  async getProfileById(userId) {
+    const { data, error } = await supabase.rpc('get_user_profile', { p_user_id: userId })
+    if (error) throw error
+    return data
+  },
+
+  async updateProfile(updates) {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) throw new Error('Not authenticated')
+    const { error } = await supabase
+      .from('profiles')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', user.id)
+    if (error) throw error
+  },
+
+  async uploadProfileImage(file, fieldName) {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) throw new Error('Not authenticated')
+    const ext = file.name.split('.').pop() || 'jpg'
+    const path = `${user.id}/${fieldName}.${ext}`
+    const { error: uploadErr } = await supabase.storage
+      .from('profile-images')
+      .upload(path, file, { upsert: true, contentType: file.type })
+    if (uploadErr) throw uploadErr
+    // Private bucket — use signed URL (1 hour expiry)
+    const { data: signedData, error: signErr } = await supabase.storage
+      .from('profile-images')
+      .createSignedUrl(path, 3600)
+    if (signErr) throw signErr
+    // Store the path, not the signed URL — we'll generate fresh signed URLs on read
+    return path
+  },
+
+  // Generate a signed URL for a private profile image path
+  async getProfileImageUrl(path) {
+    if (!path) return null
+    // If it's already a full URL (legacy public bucket), return as-is
+    if (path.startsWith('http')) return path
+    const { data, error } = await supabase.storage
+      .from('profile-images')
+      .createSignedUrl(path, 3600) // 1 hour
+    if (error) return null
+    return data.signedUrl
+  },
+
   // ---------------------------------------------------------------
   // Memberships — current user's property access
   // ---------------------------------------------------------------
@@ -677,14 +723,34 @@ export const api = {
   },
 
   // Routing log: which end devices pinged through a given routing device
+  // gateway_id in sensor_readings may be the EUI or the TTN gateway_id,
+  // so we query by the device's dev_eui (matches EUI) OR metadata gateway_id
   async getRoutingLog(gatewayEui, limit = 50) {
     const { data, error } = await supabase
       .from('routing_log')
       .select('*')
-      .eq('gateway_id', gatewayEui)
+      .or(`gateway_id.eq.${gatewayEui},gateway_id.eq.${gatewayEui.toLowerCase()}`)
       .order('received_at', { ascending: false })
       .limit(limit)
     if (error) throw error
+    // If no results, try looking up the TTN gateway_id from device metadata
+    if (data.length === 0) {
+      const { data: dev } = await supabase
+        .from('devices')
+        .select('metadata')
+        .eq('dev_eui', gatewayEui)
+        .maybeSingle()
+      const ttnGwId = dev?.metadata?.gateway_id
+      if (ttnGwId && ttnGwId !== gatewayEui) {
+        const { data: fallback, error: fbErr } = await supabase
+          .from('routing_log')
+          .select('*')
+          .eq('gateway_id', ttnGwId)
+          .order('received_at', { ascending: false })
+          .limit(limit)
+        if (!fbErr && fallback.length > 0) return fallback
+      }
+    }
     return data
   },
 

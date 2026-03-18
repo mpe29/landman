@@ -161,26 +161,26 @@ function injectDeviceCss() {
     .routing-dot {
       width: 20px; height: 20px;
       border: 2.5px solid #fff;
-      border-radius: 5px;
+      border-radius: 50%;
       cursor: pointer;
     }
     .routing-dot.fresh {
-      background: #6366f1;
+      background: #a855f7;
       box-shadow: 0 1px 4px rgba(0,0,0,0.35);
-      animation: routing-pulse 3s ease-out infinite;
+      animation: routing-pulse 2s ease-out infinite;
     }
     .routing-dot.stale {
-      background: #8b5cf6;
+      background: #9333ea;
       box-shadow: 0 1px 4px rgba(0,0,0,0.35);
     }
     .routing-dot.inactive {
-      background: #a78bfa;
+      background: #c084fc;
       box-shadow: 0 1px 4px rgba(0,0,0,0.25);
     }
     @keyframes routing-pulse {
-      0%   { box-shadow: 0 0 0 0   rgba(99,102,241,0.5), 0 1px 4px rgba(0,0,0,0.35); }
-      70%  { box-shadow: 0 0 0 12px rgba(99,102,241,0),   0 1px 4px rgba(0,0,0,0.35); }
-      100% { box-shadow: 0 0 0 0   rgba(99,102,241,0),    0 1px 4px rgba(0,0,0,0.35); }
+      0%   { box-shadow: 0 0 0 0   rgba(168,85,247,0.55), 0 1px 4px rgba(0,0,0,0.35); }
+      70%  { box-shadow: 0 0 0 14px rgba(168,85,247,0),   0 1px 4px rgba(0,0,0,0.35); }
+      100% { box-shadow: 0 0 0 0   rgba(168,85,247,0),    0 1px 4px rgba(0,0,0,0.35); }
     }
   `
   document.head.appendChild(style)

@@ -4,7 +4,7 @@ import { api } from '../api'
 
 const ROLES = ['manager', 'staff', 'contractor']
 
-export default function UserManagementPanel({ propertyId, onClose }) {
+export default function UserManagementPanel({ propertyId, onClose, onViewProfile, currentUserId }) {
   const [members, setMembers] = useState([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('members') // 'members' | 'add'
@@ -131,7 +131,13 @@ export default function UserManagementPanel({ propertyId, onClose }) {
               members.map((m) => (
                 <div key={m.id} style={s.memberRow}>
                   <div style={s.memberInfo}>
-                    <div style={s.memberName}>
+                    <div
+                      style={{ ...s.memberName, cursor: 'pointer' }}
+                      onClick={() => {
+                        const isSelf = m.user_id === currentUserId
+                        onViewProfile?.(m.user_id, isSelf)
+                      }}
+                    >
                       {m.profiles?.full_name || m.profiles?.email || '—'}
                       {m.is_admin && <span style={s.adminBadge}>Admin</span>}
                     </div>

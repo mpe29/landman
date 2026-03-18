@@ -219,6 +219,7 @@ export default function DevicesPanel({
               onClear={onFilterClear}
               isActive={deviceFilterActive}
               onRefresh={refresh}
+              setTab={setTab}
             />
           ) : (
             <ListView
@@ -453,7 +454,7 @@ const RANGE_PRESETS = [
   { key: '30d',   label: '30 days' },
 ]
 
-function FilterView({ gpsDevices, filter, onChange, onApply, onClear, isActive, onRefresh }) {
+function FilterView({ gpsDevices, filter, onChange, onApply, onClear, isActive, onRefresh, setTab }) {
   const selectedIds = filter?.deviceIds || []
   const range = filter?.range || 'today'
   const hourFrom = filter?.hourFrom ?? 6
@@ -484,9 +485,8 @@ function FilterView({ gpsDevices, filter, onChange, onApply, onClear, isActive, 
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => {}} // tabs are for visual context, handled by parent
+            onClick={() => setTab(t.key)}
             style={{ ...s.tabBtn, ...(t.key === 'filter' ? s.tabActive : {}) }}
-            disabled={t.key !== 'filter'}
           >
             {t.label}
           </button>
