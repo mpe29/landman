@@ -207,14 +207,18 @@ export default function Map({
   deviceTrailData,
   deviceFilterActive,
   onMapClick,
+  onMapBackground,
+  onContextMenu: onContextMenuProp,
 }) {
   const mapContainer     = useRef(null)
   const map              = useRef(null)
   const draw             = useRef(null)
   const obsModeRef       = useRef('individual')  // shadow for layerVisibility effect
   const deviceModeRef    = useRef('individual')  // shadow for layerVisibility effect
-  const onFeatureClickRef = useRef(onFeatureClick) // always-current ref (avoids stale closure)
-  const onMapClickRef     = useRef(onMapClick)
+  const onFeatureClickRef  = useRef(onFeatureClick) // always-current ref (avoids stale closure)
+  const onMapClickRef      = useRef(onMapClick)
+  const onMapBackgroundRef = useRef(onMapBackground)
+  const onContextMenuRef   = useRef(onContextMenuProp)
   const onViewportObsRef = useRef(onViewportObs)
   const onDrawUpdateRef  = useRef(onDrawUpdate)
   const modeRef          = useRef(mode)          // always-current mode for event listeners
@@ -231,6 +235,8 @@ export default function Map({
   // Keep refs current whenever props change
   useEffect(() => { onFeatureClickRef.current = onFeatureClick }, [onFeatureClick])
   useEffect(() => { onMapClickRef.current = onMapClick }, [onMapClick])
+  useEffect(() => { onMapBackgroundRef.current = onMapBackground }, [onMapBackground])
+  useEffect(() => { onContextMenuRef.current = onContextMenuProp }, [onContextMenuProp])
   useEffect(() => { onViewportObsRef.current  = onViewportObs  }, [onViewportObs])
   useEffect(() => { onDrawUpdateRef.current   = onDrawUpdate   }, [onDrawUpdate])
   useEffect(() => { modeRef.current           = mode           }, [mode])
@@ -245,6 +251,8 @@ export default function Map({
       center: [25, -25],
       zoom: 4,
       clickTolerance: 10,  // default 3px — increased for mobile finger imprecision
+      maxTileCacheSize: 200,  // cache more tiles (default ~50) to reduce re-fetches
+      fadeDuration: 0,        // eliminate tile fade delay — tiles appear instantly
     })
 
     draw.current = new MapboxDraw({ displayControlsDefault: false })
@@ -453,11 +461,26 @@ export default function Map({
         },
       })
 
-      // ── Desktop: placement mode click intercept ──
+      // ── Desktop: placement mode click intercept + close panels ──
       map.current.on('click', (e) => {
         if (onMapClickRef.current) {
           onMapClickRef.current(e.lngLat)
+          return
         }
+        // Close panels/menus on background click (no feature hit)
+        const allLayerIds = ACTIVE_LAYERS.flatMap((l) =>
+          l.type === 'polygon' ? [`${l.id}-fill`] : [`${l.id}-circle`]
+        )
+        const hits = map.current.queryRenderedFeatures(e.point, { layers: allLayerIds.filter((id) => map.current.getLayer(id)) })
+        if (hits.length === 0 && !nearestDevice(e.point.x, e.point.y)) {
+          onMapBackgroundRef.current?.()
+        }
+      })
+
+      // ── Right-click context menu (desktop) ──
+      map.current.on('contextmenu', (e) => {
+        e.preventDefault()
+        onContextMenuRef.current?.(e.lngLat, e.point)
       })
 
       // ── Mobile: canvas touchend for reliable small-feature taps ──
@@ -558,6 +581,28 @@ export default function Map({
           }
         }
       }, { passive: true })
+
+      // ── Long-press context menu (mobile) ──
+      let longPressTimer = null
+      let longPressStart = null
+      canvas.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) { clearTimeout(longPressTimer); return }
+        longPressStart = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        longPressTimer = setTimeout(() => {
+          const rect = canvas.getBoundingClientRect()
+          const point = { x: longPressStart.x - rect.left, y: longPressStart.y - rect.top }
+          const lngLat = map.current.unproject(point)
+          onContextMenuRef.current?.(lngLat, point)
+          longPressTimer = null
+        }, 500)
+      }, { passive: true })
+      canvas.addEventListener('touchmove', (e) => {
+        if (!longPressStart) return
+        const dx = e.touches[0].clientX - longPressStart.x
+        const dy = e.touches[0].clientY - longPressStart.y
+        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearTimeout(longPressTimer)
+      }, { passive: true })
+      canvas.addEventListener('touchend', () => { clearTimeout(longPressTimer) }, { passive: true })
 
       // ── Viewport observation reporting for ImageStrip ──────────
       const reportViewportObs = () => {
@@ -704,7 +749,7 @@ export default function Map({
           allPolygons.forEach((f) =>
             f.geometry.coordinates[0].forEach((c) => bounds.extend(c))
           )
-          map.current.fitBounds(bounds, { padding: 60 })
+          map.current.fitBounds(bounds, { padding: 60, duration: 0 })
 
           // Auto-save initial view as home if not yet set
           if (!homeView) {

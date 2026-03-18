@@ -17,7 +17,7 @@ import JoinScreen from './components/JoinScreen'
 import PendingScreen from './components/PendingScreen'
 import UserManagementPanel from './components/UserManagementPanel'
 import { api } from './api'
-import { POINT_DRAW_MODES } from './constants/pointTypes'
+import { POINT_TYPES, POINT_DRAW_MODES } from './constants/pointTypes'
 import { DEFAULT_VISIBILITY, ACTIVE_LAYERS } from './constants/layers'
 import { DEFAULT_OBS_FILTER, filterObservations } from './utils/obsFilter'
 
@@ -81,6 +81,7 @@ export default function App() {
   const [deviceTrailData, setDeviceTrailData]       = useState([])
   const [deviceFilterActive, setDeviceFilterActive] = useState(false)
   const [placingRouting, setPlacingRouting]          = useState(null) // device to place
+  const [contextMenu, setContextMenu]                = useState(null) // { x, y, lngLat }
 
   // ── Viewport observations (for ImageStrip) ─────────────────
   const [viewportObs, setViewportObs] = useState([])
@@ -406,6 +407,29 @@ export default function App() {
 
   const handleLogout = () => api.signOut()
 
+  // Close panels when clicking on the map (standard UI)
+  const handleMapBackground = useCallback(() => {
+    setOpenPanel(null)
+    setSelectedFeature(null)
+    setContextMenu(null)
+  }, [])
+
+  // Right-click / long-press: show quick-add context menu
+  const handleContextMenu = useCallback((lngLat, point) => {
+    if (mode !== 'view') return
+    setContextMenu({ x: point.x, y: point.y, lngLat })
+    setOpenPanel(null)
+  }, [mode])
+
+  // Quick-add a point from context menu
+  const handleQuickPoint = (pointType) => {
+    if (!contextMenu) return
+    const geom = { type: 'Point', coordinates: [contextMenu.lngLat.lng, contextMenu.lngLat.lat] }
+    setPendingGeometry(geom)
+    setMode(pointType.drawMode)
+    setContextMenu(null)
+  }
+
   const isAreaDraw  = AREA_DRAW_MODES.has(mode)
   const isPointDraw = POINT_DRAW_MODES.has(mode)
 
@@ -463,6 +487,8 @@ export default function App() {
         deviceTrailData={deviceTrailData}
         deviceFilterActive={deviceFilterActive}
         onMapClick={placingRouting ? handleMapClickForPlacement : null}
+        onMapBackground={handleMapBackground}
+        onContextMenu={handleContextMenu}
       />
 
       {/* ── Routing placement banner ── */}
@@ -478,6 +504,32 @@ export default function App() {
         </div>
       )}
 
+      {/* ── Context menu (right-click / long-press) ── */}
+      {contextMenu && (
+        <div
+          style={{
+            position: 'absolute', left: contextMenu.x, top: contextMenu.y,
+            zIndex: 20, transform: 'translate(-50%, -100%) translateY(-8px)',
+          }}
+        >
+          <div style={contextMenuStyle}>
+            <div style={contextMenuHeader}>Add Point</div>
+            <div style={contextMenuGrid}>
+              {POINT_TYPES.map((pt) => (
+                <button
+                  key={pt.id}
+                  style={contextMenuItem}
+                  onClick={() => handleQuickPoint(pt)}
+                >
+                  <span style={{ fontSize: 18 }}>{pt.icon}</span>
+                  <span style={{ fontSize: 10, color: T.textMuted }}>{pt.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Top-left: app menu ── */}
       <MainMenu
         isOpen={openPanel === 'menu'}
@@ -486,10 +538,11 @@ export default function App() {
         isAdmin={isAdmin}
         pendingCount={pendingCount}
         onUserManagement={() => { setShowUserMgmt(true); setOpenPanel(null) }}
+        userName={session?.user?.user_metadata?.full_name || session?.user?.email}
       />
 
       {/* ── Bottom-left: stacked panels (only one open at a time) ── */}
-      <div style={{ ...stackStyle, bottom: showImageStrip ? (stripCollapsed ? COLLAPSED_H + 46 : STRIP_HEIGHT + 10) : 32 }}>
+      <div style={{ ...stackStyle, bottom: showImageStrip && !stripCollapsed ? STRIP_HEIGHT + 2 : 32 }}>
         <Toolbar
           mode={mode}
           onModeChange={handleModeChange}
@@ -767,3 +820,25 @@ const layerBtnOnStyle = {
   color: C.dryGrassYellow,
 }
 const dimBtnStyle = { opacity: 0.4 }
+
+const contextMenuStyle = {
+  background: T.surface, backdropFilter: 'blur(10px)',
+  border: `1px solid ${T.surfaceBorder}`, borderRadius: 10,
+  boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+  padding: '8px',
+  minWidth: 180,
+}
+const contextMenuHeader = {
+  fontSize: 10, fontWeight: 700, letterSpacing: '0.12em',
+  color: T.textFaint, padding: '2px 4px 6px',
+  textTransform: 'uppercase',
+}
+const contextMenuGrid = {
+  display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 2,
+}
+const contextMenuItem = {
+  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+  padding: '6px 4px', background: 'none', border: 'none',
+  borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit',
+  transition: 'background 0.1s',
+}
