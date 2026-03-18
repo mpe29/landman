@@ -137,9 +137,11 @@ BEGIN
     UPDATE devices
     SET
         last_seen_at     = NEW.received_at,
-        last_lat         = NEW.lat,
-        last_lng         = NEW.lng,
-        last_battery_pct = NEW.battery_pct
+        -- Only overwrite position when the new reading has coordinates;
+        -- heartbeat-only readings (no GPS fix) must not null out a good position.
+        last_lat         = COALESCE(NEW.lat, last_lat),
+        last_lng         = COALESCE(NEW.lng, last_lng),
+        last_battery_pct = COALESCE(NEW.battery_pct, last_battery_pct)
     WHERE id = NEW.device_id
       AND (last_seen_at IS NULL OR NEW.received_at > last_seen_at);
     RETURN NEW;

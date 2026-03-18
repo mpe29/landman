@@ -16,6 +16,7 @@ import LoginScreen from './components/LoginScreen'
 import JoinScreen from './components/JoinScreen'
 import PendingScreen from './components/PendingScreen'
 import UserManagementPanel from './components/UserManagementPanel'
+import ProfilePanel from './components/ProfilePanel'
 import { api } from './api'
 import { POINT_TYPES, POINT_DRAW_MODES } from './constants/pointTypes'
 import { DEFAULT_VISIBILITY, ACTIVE_LAYERS } from './constants/layers'
@@ -47,6 +48,7 @@ export default function App() {
   const [membershipsLoaded, setMembershipsLoaded] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
   const [showUserMgmt, setShowUserMgmt] = useState(false)
+  const [showProfile, setShowProfile] = useState(null) // null | { userId, isOwn }
   const [joinToken, setJoinToken] = useState(getJoinToken)
 
   // ── App state (always declared) ─────────────────────────────────
@@ -538,6 +540,7 @@ export default function App() {
         isAdmin={isAdmin}
         pendingCount={pendingCount}
         onUserManagement={() => { setShowUserMgmt(true); setOpenPanel(null) }}
+        onProfile={() => { setShowProfile({ userId: session?.user?.id, isOwn: true }); setOpenPanel(null) }}
         userName={session?.user?.user_metadata?.full_name || session?.user?.email}
       />
 
@@ -699,7 +702,21 @@ export default function App() {
       {showUserMgmt && activePropertyId && (
         <UserManagementPanel
           propertyId={activePropertyId}
+          currentUserId={session?.user?.id}
           onClose={() => { setShowUserMgmt(false); if (isAdmin) api.getPendingCount(activePropertyId).then(setPendingCount).catch(() => {}) }}
+          onViewProfile={(userId, isSelf) => {
+            setShowProfile({ userId, isOwn: isSelf })
+          }}
+        />
+      )}
+
+      {/* Profile panel */}
+      {showProfile && (
+        <ProfilePanel
+          viewUserId={showProfile.userId}
+          isOwnProfile={showProfile.isOwn}
+          isAdmin={isAdmin}
+          onClose={() => setShowProfile(null)}
         />
       )}
     </div>

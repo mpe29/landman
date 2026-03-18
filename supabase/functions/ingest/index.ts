@@ -81,12 +81,38 @@ Deno.serve(async (req: Request) => {
       device = newDevice
     }
 
+    // ── Handle location_solved webhooks (TTN sends these separately) ─
+    // Update the device's last position without creating a duplicate reading.
+    const locSolved = (body?.location_solved ?? body?.data?.location_solved) as Record<string, unknown> | undefined
+    if (locSolved) {
+      const loc = locSolved.location as Record<string, unknown> | undefined
+      if (loc?.latitude != null && loc?.longitude != null) {
+        const lat = Number(loc.latitude)
+        const lng = Number(loc.longitude)
+        // Update the most recent reading for this device that has no coordinates
+        const { error: locErr } = await supabase
+          .from('sensor_readings')
+          .update({ lat, lng })
+          .eq('device_id', device.id)
+          .is('lat', null)
+          .order('received_at', { ascending: false })
+          .limit(1)
+        if (locErr) {
+          console.error(`ingest: failed to update location for ${devEui}`, locErr)
+        } else {
+          console.log(`ingest: location_solved for ${devEui} → ${lat},${lng}`)
+        }
+      }
+      return new Response('ok', { status: 200 })
+    }
+
     // ── Parse normalised fields (device-type-specific) ────────────
     const parsed = parsePayload(body, device.device_type_id)
 
     // ── Extract gateway info from rx_metadata ─────────────────────
     const gatewayIds = extractGatewayIds(body)
-    const primaryGateway = gatewayIds[0]?.gatewayId ?? null
+    // Use same identifier stored as dev_eui on the gateway device record
+    const primaryGateway = gatewayIds[0]?.eui ?? gatewayIds[0]?.gatewayId ?? null
 
     // ── Insert sensor reading ─────────────────────────────────────
     // raw is always stored; parsed fields may be null if type unknown.
@@ -109,7 +135,9 @@ Deno.serve(async (req: Request) => {
     if (readingErr) {
       console.error('ingest: failed to insert reading', readingErr)
     } else {
-      console.log(`ingest: saved reading for device ${devEui} (${device.active ? 'active' : 'unregistered'})${primaryGateway ? ` via gw ${primaryGateway}` : ''}`)
+      const fixInfo = parsed.lat != null ? `GPS ${parsed.lat},${parsed.lng}` : 'No GPS fix'
+      const batInfo = parsed.battery_pct != null ? ` bat=${parsed.battery_pct}%` : ''
+      console.log(`ingest: saved reading for device ${devEui} (${device.active ? 'active' : 'unregistered'}) [${fixInfo}${batInfo}]${primaryGateway ? ` via gw ${primaryGateway}` : ''}`)
     }
 
     // ── Auto-discover routing devices (gateways) from rx_metadata ─
@@ -361,31 +389,27 @@ function parsePayload(body: Record<string, unknown>, deviceTypeId: string | null
       }
     }
 
-    // ── Trail camera: motion events ───────────────────────────────
-    // Fields: motion, trigger_count
-    if (dp.motion != null || dp.trigger_count != null) {
-      const extra: Record<string, unknown> = {}
-      if (dp.motion        != null) extra.motion_detected = Boolean(dp.motion)
-      if (dp.trigger_count != null) extra.trigger_count    = Number(dp.trigger_count)
-      return {
-        device_time: rxTime, rssi, snr,
-        extra: Object.keys(extra).length ? extra : null,
-      }
-    }
-
     // ── Seeed SenseCAP T1000-E ───────────────────────────────────
-    // Fields: has_fix, lat, lon, battery_pct, ic_temp_c
-    if (dp.has_fix != null || dp.battery_pct != null) {
-      const hasFix = dp.has_fix === true
+    // MUST come before trail camera check — SenseCAP payloads include
+    // a `motion` object ({ count, detected }) which would false-match
+    // the trail camera's simple `motion` boolean check.
+    // Older codec: has_fix (bool), lat, lon, battery_pct, ic_temp_c
+    // Newer codec: fix_tech ("gnss"|"wifi"|"ble"|"none"), device_type: "sensecap_t1000",
+    //              battery_pct, battery_v — coordinates in uplink_message.locations
+    if (dp.device_type === 'sensecap_t1000' || dp.has_fix != null || (dp.battery_pct != null && dp.fix_tech != null)) {
+      // Determine GPS fix from either codec version
+      const fixTech = dp.fix_tech as string | undefined
+      const hasFix = dp.has_fix === true || (fixTech != null && fixTech !== 'none' && fixTech !== '')
       let lat: number | null = null
       let lng: number | null = null
 
       if (hasFix) {
-        lat = dp.lat != null ? Number(dp.lat) : null
-        lng = dp.lon != null ? Number(dp.lon) : null
+        // Older codec: lat/lon in decoded_payload
+        lat = dp.lat != null ? Number(dp.lat) : (dp.latitude != null ? Number(dp.latitude) : null)
+        lng = dp.lon != null ? Number(dp.lon) : (dp.longitude != null ? Number(dp.longitude) : null)
       }
 
-      // Fallback: TTN network-estimated location
+      // Fallback: coordinates in uplink_message.locations (newer codec + TTN location solving)
       if ((lat === null || lng === null) && ttnMsg?.locations) {
         const locs = ttnMsg.locations as Record<string, Record<string, unknown>>
         const frmLoc = locs?.['frm-payload']
@@ -401,16 +425,28 @@ function parsePayload(body: Record<string, unknown>, deviceTypeId: string | null
         const extra: Record<string, unknown> = {}
         if (dp.ic_temp_c != null) extra.temperature_c = Number(dp.ic_temp_c)
         if (dp.has_fix   != null) extra.has_fix       = dp.has_fix
+        if (fixTech      != null) extra.fix_tech      = fixTech
+        const skipKeys = ['lat', 'lon', 'latitude', 'longitude', 'battery_pct', 'ic_temp_c', 'has_fix', 'fix_tech', 'device_type', 'battery_v']
         for (const [k, v] of Object.entries(dp)) {
-          if (!['lat', 'lon', 'battery_pct', 'ic_temp_c', 'has_fix'].includes(k)) {
-            extra[k] = v
-          }
+          if (!skipKeys.includes(k)) extra[k] = v
         }
         return {
           device_time: rxTime, lat, lng,
           battery_pct: bat, rssi, snr,
           extra: Object.keys(extra).length ? extra : null,
         }
+      }
+    }
+
+    // ── Trail camera: motion events ───────────────────────────────
+    // Fields: motion (boolean), trigger_count — NOT an object like SenseCAP's motion
+    if ((typeof dp.motion === 'boolean' || typeof dp.motion === 'number') || dp.trigger_count != null) {
+      const extra: Record<string, unknown> = {}
+      if (dp.motion        != null) extra.motion_detected = Boolean(dp.motion)
+      if (dp.trigger_count != null) extra.trigger_count    = Number(dp.trigger_count)
+      return {
+        device_time: rxTime, rssi, snr,
+        extra: Object.keys(extra).length ? extra : null,
       }
     }
 
