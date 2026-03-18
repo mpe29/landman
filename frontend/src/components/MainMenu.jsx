@@ -1,5 +1,12 @@
 import { useEffect, useRef } from 'react'
-import { T } from '../constants/theme'
+import { T, C } from '../constants/theme'
+
+function getInitials(name) {
+  if (!name) return '?'
+  const parts = name.trim().split(/\s+/)
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+  return parts[0][0].toUpperCase()
+}
 
 const MENU_ITEMS = [
   { id: 'profile',      label: 'Profile' },
@@ -11,7 +18,7 @@ const MENU_ITEMS = [
   { id: 'logout',       label: 'Log Out' },
 ]
 
-export default function MainMenu({ isOpen, onOpen, onLogout, isAdmin, pendingCount, onUserManagement }) {
+export default function MainMenu({ isOpen, onOpen, onLogout, isAdmin, pendingCount, onUserManagement, userName }) {
   const ref = useRef(null)
 
   // Close on outside click
@@ -28,16 +35,26 @@ export default function MainMenu({ isOpen, onOpen, onLogout, isAdmin, pendingCou
     onOpen() // close menu for unimplemented items
   }
 
+  const initials = getInitials(userName)
+
   return (
     <div ref={ref} style={s.wrap}>
       <button style={s.trigger} onClick={onOpen}>
         <span style={s.logo}>LANDMAN</span>
+        <span style={s.avatar}>{initials}</span>
         {pendingCount > 0 && <span style={s.badge}>{pendingCount}</span>}
-        <span style={{ ...s.chevron, transform: isOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
       </button>
 
       {isOpen && (
         <div style={s.dropdown}>
+          {userName && (
+            <>
+              <div style={s.userInfo}>
+                <span style={s.userName}>{userName}</span>
+              </div>
+              <div style={s.divider} />
+            </>
+          )}
           {MENU_ITEMS.map((item, i) => {
             if (item.divider) return <div key={i} style={s.divider} />
             if (item.adminOnly && !isAdmin) return null
@@ -64,9 +81,18 @@ const s = {
     display: 'flex', alignItems: 'center', gap: 7,
     background: T.surface, backdropFilter: 'blur(10px)',
     border: `1px solid ${T.surfaceBorder}`, borderRadius: 8,
-    padding: '7px 12px', boxShadow: T.surfaceShadow,
+    padding: '5px 8px', boxShadow: T.surfaceShadow,
     cursor: 'pointer', fontFamily: 'inherit',
     position: 'relative',
+  },
+  avatar: {
+    width: 26, height: 26,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: C.deepOlive + '18',
+    border: `1px solid ${C.deepOlive}55`,
+    borderRadius: 8, flexShrink: 0,
+    fontSize: 10, fontWeight: 700, letterSpacing: '0.02em',
+    color: C.deepOlive, fontFamily: 'inherit',
   },
   logo: {
     color: T.brand, fontFamily: "'Exo 2', sans-serif",
@@ -90,9 +116,26 @@ const s = {
     border: `1px solid ${T.surfaceBorder}`, borderRadius: 10,
     boxShadow: T.surfaceShadow, minWidth: 180, overflow: 'hidden',
   },
+  userInfo: {
+    display: 'flex', alignItems: 'center',
+    padding: '7px 12px',
+  },
+  avatarLg: {
+    width: 32, height: 32,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: C.deepOlive + '18',
+    border: `1px solid ${C.deepOlive}55`,
+    borderRadius: 8, flexShrink: 0,
+    fontSize: 12, fontWeight: 700, letterSpacing: '0.02em',
+    color: C.deepOlive, fontFamily: 'inherit',
+  },
+  userName: {
+    fontSize: 13, fontWeight: 600, color: T.text,
+    fontFamily: 'inherit',
+  },
   item: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    width: '100%', padding: '9px 16px',
+    width: '100%', padding: '6px 12px',
     background: 'transparent', border: 'none',
     color: T.textMuted, fontSize: 13, fontWeight: 500, textAlign: 'left',
     cursor: 'pointer', fontFamily: 'inherit',

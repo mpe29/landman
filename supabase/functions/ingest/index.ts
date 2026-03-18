@@ -57,7 +57,7 @@ Deno.serve(async (req: Request) => {
     // ── Look up or auto-register device ───────────────────────────
     let { data: device } = await supabase
       .from('devices')
-      .select('id, device_type_id, active')
+      .select('id, device_type_id, active, property_id')
       .eq('dev_eui', devEui)
       .maybeSingle()
 
@@ -71,7 +71,7 @@ Deno.serve(async (req: Request) => {
           active: false,
           metadata: { auto_registered: true, first_seen: new Date().toISOString() },
         })
-        .select('id, device_type_id, active')
+        .select('id, device_type_id, active, property_id')
         .single()
 
       if (insertErr) {
@@ -125,37 +125,52 @@ Deno.serve(async (req: Request) => {
         _routingTypeId = gwType?.id ?? null
       }
 
+      // Use reporting device's property_id so gateway passes RLS
+      const gwPropertyId = device.property_id ?? null
+
       for (const gw of gatewayIds) {
+        // Use EUI as the unique device identifier; fall back to gateway_id
+        const gwDevEui = gw.eui ?? gw.gatewayId
+
         // Skip if we've already seen this gateway in this warm instance
-        if (_knownGateways.has(gw.gatewayId)) continue
+        if (_knownGateways.has(gwDevEui)) continue
 
         const { data: existing } = await supabase
           .from('devices')
-          .select('id')
-          .eq('dev_eui', gw.gatewayId)
+          .select('id, property_id')
+          .eq('dev_eui', gwDevEui)
           .maybeSingle()
 
         if (!existing) {
           const { error: gwErr } = await supabase
             .from('devices')
             .insert({
-              dev_eui: gw.gatewayId,
+              dev_eui: gwDevEui,
               device_type_id: _routingTypeId,
+              property_id: gwPropertyId,
               name: `Gateway ${gw.gatewayId.slice(-6).toUpperCase()}`,
               active: false,
               metadata: {
                 auto_registered: true,
                 first_seen: new Date().toISOString(),
                 source: 'rx_metadata',
+                gateway_id: gw.gatewayId,
+                eui: gw.eui,
               },
             })
           if (gwErr && gwErr.code !== '23505') { // 23505 = unique violation (race)
-            console.error(`ingest: failed to auto-register gateway ${gw.gatewayId}`, gwErr)
+            console.error(`ingest: failed to auto-register gateway ${gwDevEui}`, gwErr)
           } else {
-            console.log(`ingest: auto-discovered gateway ${gw.gatewayId}`)
+            console.log(`ingest: auto-discovered gateway ${gwDevEui} (gw_id: ${gw.gatewayId})`)
           }
+        } else if (!existing.property_id && gwPropertyId) {
+          // Gateway exists but has no property — adopt it into this property
+          await supabase
+            .from('devices')
+            .update({ property_id: gwPropertyId })
+            .eq('id', existing.id)
         }
-        _knownGateways.add(gw.gatewayId)
+        _knownGateways.add(gwDevEui)
       }
     }
 
@@ -201,6 +216,7 @@ function extractDevEui(body: Record<string, unknown>): string | null {
 
 interface GatewayInfo {
   gatewayId: string
+  eui: string | null
   rssi: number | null
   snr: number | null
 }
@@ -217,6 +233,7 @@ function extractGatewayIds(body: Record<string, unknown>): GatewayInfo[] {
       const gwIds = m.gateway_ids as Record<string, unknown>
       return {
         gatewayId: String(gwIds.gateway_id ?? gwIds.eui ?? '').toLowerCase(),
+        eui: gwIds.eui ? String(gwIds.eui).toLowerCase() : null,
         rssi: m.rssi != null ? Number(m.rssi) : null,
         snr: m.snr != null ? Number(m.snr) : null,
       }

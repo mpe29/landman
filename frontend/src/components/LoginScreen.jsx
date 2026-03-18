@@ -113,6 +113,7 @@ export default function LoginScreen() {
       <div style={s.container}>
         <div style={s.card}>
           <div style={s.logo}>LANDMAN</div>
+          <div style={s.tagline}>Land Management Platform</div>
           <div style={s.successBox}>
             <div style={{ fontSize: 14, fontWeight: 600, color: C.deepOlive }}>Check your email</div>
             <div style={{ fontSize: 13, color: T.textMuted, marginTop: 6 }}>
@@ -137,6 +138,7 @@ export default function LoginScreen() {
       <div style={s.container}>
         <div style={s.card}>
           <div style={s.logo}>LANDMAN</div>
+          <div style={s.tagline}>Land Management Platform</div>
           <div style={s.subtitle}>Sign in with PIN</div>
           <form onSubmit={handlePinNameSubmit} style={s.form}>
             <input
@@ -154,12 +156,14 @@ export default function LoginScreen() {
               {loading ? 'Looking up...' : 'Continue'}
             </button>
           </form>
-          <button
-            style={s.linkBtn}
-            onClick={() => { setMode('signin'); setError('') }}
-          >
-            Back to Sign In
-          </button>
+          <div style={s.linkRow}>
+            <button
+              style={s.linkBtn}
+              onClick={() => { setMode('signin'); setError('') }}
+            >
+              Back to email sign in
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -171,6 +175,7 @@ export default function LoginScreen() {
       <div style={s.container}>
         <div style={s.card}>
           <div style={s.logo}>LANDMAN</div>
+          <div style={s.tagline}>Land Management Platform</div>
           <div style={s.greeting}>Hi {pinInfo?.userName}</div>
           <div style={s.subtitle}>
             Enter your PIN to access <strong>{pinInfo?.propertyName}</strong>
@@ -194,12 +199,14 @@ export default function LoginScreen() {
           </div>
           {error && <div style={s.error}>{error}</div>}
           {loading && <div style={s.subtitle}>Signing in...</div>}
-          <button
-            style={s.linkBtn}
-            onClick={() => { setMode('pin_name'); setError(''); setPin(['', '', '', '']); setPinInfo(null) }}
-          >
-            Back
-          </button>
+          <div style={s.linkRow}>
+            <button
+              style={s.linkBtn}
+              onClick={() => { setMode('pin_name'); setError(''); setPin(['', '', '', '']); setPinInfo(null) }}
+            >
+              Back
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -210,6 +217,7 @@ export default function LoginScreen() {
     <div style={s.container}>
       <div style={s.card}>
         <div style={s.logo}>LANDMAN</div>
+        <div style={s.tagline}>Land Management Platform</div>
         <div style={s.subtitle}>
           {mode === 'signin' ? 'Sign in to your account' : 'Create your property'}
         </div>
@@ -339,11 +347,16 @@ const s = {
   },
   logo: {
     fontFamily: "'Exo 2', sans-serif", fontWeight: 800,
-    fontSize: 28, letterSpacing: '0.14em', color: C.deepOlive,
+    fontSize: 30, letterSpacing: '0.14em', color: C.deepOlive,
     marginBottom: 4,
   },
+  tagline: {
+    fontFamily: "'Exo 2', sans-serif", fontWeight: 700,
+    fontSize: 12, letterSpacing: '0.10em', color: C.pistachioGreen,
+    marginBottom: 16, textAlign: 'center',
+  },
   subtitle: {
-    fontSize: 13, color: T.textMuted, marginBottom: 24, textAlign: 'center',
+    fontSize: 13, color: T.textMuted, marginBottom: 12, textAlign: 'center',
   },
   greeting: {
     fontSize: 18, fontWeight: 600, color: C.deepOlive, marginBottom: 4,
