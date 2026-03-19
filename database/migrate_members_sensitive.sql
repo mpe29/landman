@@ -10,7 +10,8 @@
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- Secure view: only admins see pin and join_token
-CREATE OR REPLACE VIEW property_members_safe AS
+CREATE OR REPLACE VIEW property_members_safe
+WITH (security_invoker = true) AS
 SELECT
     id,
     property_id,

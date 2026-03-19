@@ -155,7 +155,11 @@ export default function App() {
               const pending = JSON.parse(raw)
               localStorage.removeItem('landman_pending_property')
               // Only auto-create if the pending property belongs to this user
-              if (pending.email && pending.email !== session.user?.email) return
+              if (pending.email && pending.email !== session.user?.email) {
+                setMemberships(m)
+                setMembershipsLoaded(true)
+                return
+              }
               await api.createProperty({ name: pending.name, owner: pending.owner })
               const refreshed = await api.getMyMemberships()
               setMemberships(refreshed)
