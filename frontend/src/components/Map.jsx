@@ -311,7 +311,7 @@ export default function Map({
             if (device) { onFeatureClickRef.current?.({ featureType: 'device', data: device }); return }
             onFeatureClickRef.current?.({
               featureType: layer.featureType,
-              data: { ...e.features[0].properties, _geometry: e.features[0].geometry },
+              data: e.features[0].properties,
             })
           })
           map.current.on('mouseenter', `${layer.id}-fill`, () => { map.current.getCanvas().style.cursor = 'pointer' })
@@ -576,7 +576,7 @@ export default function Map({
             const layer = ACTIVE_LAYERS.find((l) => l.id === lb)
             onFeatureClickRef.current?.({
               featureType: layer?.featureType,
-              data: { ...polyHits[0].properties, _geometry: polyHits[0].geometry },
+              data: polyHits[0].properties,
             })
           }
         }

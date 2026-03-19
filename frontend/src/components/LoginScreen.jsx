@@ -40,7 +40,7 @@ export default function LoginScreen() {
         } else {
           // Email confirmation required — stash property info so we can
           // create it after the user confirms and signs in.
-          try { localStorage.setItem('landman_pending_property', JSON.stringify({ name: propertyName, owner: fullName })) } catch {}
+          try { localStorage.setItem('landman_pending_property', JSON.stringify({ name: propertyName, owner: fullName, email })) } catch {}
           setSignupSuccess(true)
         }
       }

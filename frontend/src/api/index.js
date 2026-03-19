@@ -139,7 +139,7 @@ export const api = {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return []
     const { data, error } = await supabase
-      .from('property_members')
+      .from('property_members_safe')
       .select('*, properties(id, name)')
       .eq('user_id', user.id)
       .eq('status', 'approved')
@@ -167,8 +167,9 @@ export const api = {
   },
 
   async getPropertyMembers(propertyId) {
+    // Use the safe view which masks pin/join_token for non-admins
     const { data, error } = await supabase
-      .from('property_members')
+      .from('property_members_safe')
       .select('*, profiles(full_name, email)')
       .eq('property_id', propertyId)
       .order('created_at')
@@ -197,7 +198,7 @@ export const api = {
 
   async getPendingCount(propertyId) {
     const { count, error } = await supabase
-      .from('property_members')
+      .from('property_members_safe')
       .select('id', { count: 'exact', head: true })
       .eq('property_id', propertyId)
       .eq('status', 'pending')

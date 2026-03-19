@@ -156,6 +156,12 @@ export default function App() {
             if (raw) {
               const pending = JSON.parse(raw)
               localStorage.removeItem('landman_pending_property')
+              // Only auto-create if the pending property belongs to this user
+              if (pending.email && pending.email !== session.user?.email) {
+                setMemberships(m)
+                setMembershipsLoaded(true)
+                return
+              }
               await api.createProperty({ name: pending.name, owner: pending.owner })
               const refreshed = await api.getMyMemberships()
               setMemberships(refreshed)
@@ -307,11 +313,24 @@ export default function App() {
 
   const handleModeChange = (newMode) => {
     setMode(newMode)
-    if (newMode === 'view') { setPendingGeometry(null); setEditingBoundary(null); setEditedGeometry(null) }
+    // Always clear boundary edit state when switching away from edit_boundary
+    if (newMode !== 'edit_boundary') { setEditingBoundary(null); setEditedGeometry(null) }
+    if (newMode === 'view') setPendingGeometry(null)
     if (newMode !== 'view') setSelectedFeature(null)
   }
 
-  const handleEditBoundary = ({ featureType, id, name, boundary }) => {
+  const handleEditBoundary = ({ featureType, id, name }) => {
+    // Look up canonical geometry from loadedData (fetched from PostGIS views),
+    // NOT from the tile-rendered _geometry which can be clipped/simplified.
+    let boundary = null
+    if (featureType === 'area') {
+      const area = [...loadedData.farms, ...loadedData.camps].find((a) => a.id === id)
+      boundary = area?.boundary ?? null
+    } else if (featureType === 'property') {
+      const prop = loadedData.properties.find((p) => p.id === id)
+      boundary = prop?.boundary ?? null
+    }
+    if (!boundary) { alert('Could not load boundary data — please reload and try again.'); return }
     setEditingBoundary({ featureType, id, name, boundary })
     setEditedGeometry(null)
     setSelectedFeature(null)
