@@ -1,13 +1,19 @@
 // LANDMAN — IoT Sensor Ingest Edge Function
-// POST https://<project>.supabase.co/functions/v1/ingest
+// POST https://<project>.supabase.co/functions/v1/ingest/{property_id}/{platform}
 //
-// Accepts webhook payloads from any LoRa/IoT network.
-// Currently supports: TTN (The Things Network) v3
+// Accepts webhook payloads from IoT platforms (TTN, Blues Wireless, HTTP).
+// Each property has its own webhook URL and auth token, managed via the
+// manage-integration Edge Function.
 //
-// Required env vars (set in Supabase Dashboard → Edge Functions → Secrets):
-//   INGEST_SECRET   — shared bearer token; set the same value in TTN webhook headers
-//   SUPABASE_URL    — auto-provided by Supabase runtime
-//   SUPABASE_SERVICE_ROLE_KEY — auto-provided by Supabase runtime
+// URL scheme:
+//   /functions/v1/ingest/{property_id}/{platform}
+//   e.g. /functions/v1/ingest/a1b2c3d4-..../ttn
+//
+// Auth: Bearer token validated against SHA-256 hash in property_integrations.
+//
+// Required env vars (auto-provided by Supabase runtime):
+//   SUPABASE_URL
+//   SUPABASE_SERVICE_ROLE_KEY
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -16,35 +22,39 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, content-type',
 }
 
+// SHA-256 hash a string, return hex
+async function hashToken(token: string): Promise<string> {
+  const encoded = new TextEncoder().encode(token)
+  const digest = await crypto.subtle.digest('SHA-256', encoded)
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 Deno.serve(async (req: Request) => {
   // ── CORS preflight ────────────────────────────────────────────────
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
-  // ── Always return 200 to prevent LoRa network retries ─────────────
+  // ── Always return 200 to prevent IoT network retries ──────────────
   // We capture any errors internally; the network must never see a 4xx/5xx.
   try {
-    // ── Auth: validate shared bearer secret ───────────────────────
-    const ingestSecret = Deno.env.get('INGEST_SECRET')
-    if (ingestSecret) {
-      const authHeader = req.headers.get('Authorization') ?? ''
-      const token = authHeader.replace('Bearer ', '').trim()
-      if (token !== ingestSecret) {
-        console.warn('ingest: unauthorized request')
-        return new Response('ok', { status: 200 })  // still 200 — don't reveal auth failure
-      }
+    // ── Parse URL path: /ingest/{property_id}/{platform} ────────────
+    const url = new URL(req.url)
+    const pathParts = url.pathname.replace(/^\/+|\/+$/g, '').split('/')
+    // Path will be like: ["ingest", "{property_id}", "{platform}"]
+    // Find "ingest" in the path and take the next two segments
+    const ingestIdx = pathParts.indexOf('ingest')
+    const propertyId = ingestIdx >= 0 ? pathParts[ingestIdx + 1] : undefined
+    const platform   = ingestIdx >= 0 ? pathParts[ingestIdx + 2] : undefined
+
+    if (!propertyId || !platform) {
+      console.warn('ingest: missing property_id or platform in URL path')
+      return new Response('ok', { status: 200 })
     }
 
-    // ── Parse body ────────────────────────────────────────────────
-    const body = await req.json()
-
-    // ── Detect network / extract dev_eui ─────────────────────────
-    // TTN v3 format: body.data.end_device_ids.dev_eui  (TTN wraps payload in a "data" key)
-    // Also supports direct HTTP devices posting their own ID.
-    const devEui = extractDevEui(body)
-    if (!devEui) {
-      console.warn('ingest: could not extract dev_eui from payload', JSON.stringify(body).slice(0, 200))
+    const validPlatforms = ['ttn', 'blues', 'http']
+    if (!validPlatforms.includes(platform)) {
+      console.warn(`ingest: unknown platform "${platform}"`)
       return new Response('ok', { status: 200 })
     }
 
@@ -54,6 +64,39 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
+    // ── Auth: validate per-property webhook token ───────────────────
+    const authHeader = req.headers.get('Authorization') ?? ''
+    const bearerToken = authHeader.replace('Bearer ', '').trim()
+    if (!bearerToken) {
+      console.warn('ingest: missing bearer token')
+      return new Response('ok', { status: 200 })
+    }
+
+    const tokenHash = await hashToken(bearerToken)
+    const { data: integration } = await supabase
+      .from('property_integrations')
+      .select('id, property_id, platform, enabled, message_count')
+      .eq('property_id', propertyId)
+      .eq('platform', platform)
+      .eq('webhook_token', tokenHash)
+      .eq('enabled', true)
+      .maybeSingle()
+
+    if (!integration) {
+      console.warn(`ingest: unauthorized — no matching integration for property ${propertyId} / ${platform}`)
+      return new Response('ok', { status: 200 })
+    }
+
+    // ── Parse body ────────────────────────────────────────────────
+    const body = await req.json()
+
+    // ── Extract device ID (platform-specific) ───────────────────────
+    const devEui = extractDeviceId(body, platform)
+    if (!devEui) {
+      console.warn(`ingest: could not extract device ID from ${platform} payload`, JSON.stringify(body).slice(0, 200))
+      return new Response('ok', { status: 200 })
+    }
+
     // ── Look up or auto-register device ───────────────────────────
     let { data: device } = await supabase
       .from('devices')
@@ -62,14 +105,15 @@ Deno.serve(async (req: Request) => {
       .maybeSingle()
 
     if (!device) {
-      console.log(`ingest: unknown dev_eui ${devEui} — auto-registering`)
+      console.log(`ingest: unknown device ${devEui} on ${platform} — auto-registering for property ${propertyId}`)
       const { data: newDevice, error: insertErr } = await supabase
         .from('devices')
         .insert({
           dev_eui: devEui,
           name: `Unknown ${devEui.slice(-6).toUpperCase()}`,
           active: false,
-          metadata: { auto_registered: true, first_seen: new Date().toISOString() },
+          property_id: propertyId,
+          metadata: { auto_registered: true, first_seen: new Date().toISOString(), platform },
         })
         .select('id, device_type_id, active, property_id')
         .single()
@@ -79,43 +123,55 @@ Deno.serve(async (req: Request) => {
         return new Response('ok', { status: 200 })
       }
       device = newDevice
+    } else if (!device.property_id) {
+      // Existing device with no property — adopt it
+      await supabase
+        .from('devices')
+        .update({ property_id: propertyId })
+        .eq('id', device.id)
+      device.property_id = propertyId
     }
 
-    // ── Handle location_solved webhooks (TTN sends these separately) ─
-    // Update the device's last position without creating a duplicate reading.
-    const locSolved = (body?.location_solved ?? body?.data?.location_solved) as Record<string, unknown> | undefined
-    if (locSolved) {
-      const loc = locSolved.location as Record<string, unknown> | undefined
-      if (loc?.latitude != null && loc?.longitude != null) {
-        const lat = Number(loc.latitude)
-        const lng = Number(loc.longitude)
-        // Update the most recent reading for this device that has no coordinates
-        const { error: locErr } = await supabase
-          .from('sensor_readings')
-          .update({ lat, lng })
-          .eq('device_id', device.id)
-          .is('lat', null)
-          .order('received_at', { ascending: false })
-          .limit(1)
-        if (locErr) {
-          console.error(`ingest: failed to update location for ${devEui}`, locErr)
-        } else {
-          console.log(`ingest: location_solved for ${devEui} → ${lat},${lng}`)
+    // ── Handle TTN location_solved webhooks (sent separately) ───────
+    if (platform === 'ttn') {
+      const locSolved = (body?.location_solved ?? body?.data?.location_solved) as Record<string, unknown> | undefined
+      if (locSolved) {
+        const loc = locSolved.location as Record<string, unknown> | undefined
+        if (loc?.latitude != null && loc?.longitude != null) {
+          const lat = Number(loc.latitude)
+          const lng = Number(loc.longitude)
+          const { error: locErr } = await supabase
+            .from('sensor_readings')
+            .update({ lat, lng })
+            .eq('device_id', device.id)
+            .is('lat', null)
+            .order('received_at', { ascending: false })
+            .limit(1)
+          if (locErr) {
+            console.error(`ingest: failed to update location for ${devEui}`, locErr)
+          } else {
+            console.log(`ingest: location_solved for ${devEui} → ${lat},${lng}`)
+          }
         }
+        // Update integration counters even for location_solved
+        await supabase
+          .from('property_integrations')
+          .update({ last_message_at: new Date().toISOString(), message_count: (integration.message_count ?? 0) + 1 })
+          .eq('id', integration.id)
+        return new Response('ok', { status: 200 })
       }
-      return new Response('ok', { status: 200 })
     }
 
-    // ── Parse normalised fields (device-type-specific) ────────────
-    const parsed = parsePayload(body, device.device_type_id)
+    // ── Parse normalised fields (platform & device-type-specific) ───
+    const parsed = platform === 'blues'
+      ? parseBluesPayload(body)
+      : parseTtnPayload(body, device.device_type_id)
 
-    // ── Extract gateway info from rx_metadata ─────────────────────
-    const gatewayIds = extractGatewayIds(body)
-    // Use same identifier stored as dev_eui on the gateway device record
+    // ── Extract gateway info (TTN only) ─────────────────────────────
+    const gatewayIds = platform === 'ttn' ? extractGatewayIds(body) : []
     const primaryGateway = gatewayIds[0]?.eui ?? gatewayIds[0]?.gatewayId ?? null
 
     // ── Insert sensor reading ─────────────────────────────────────
-    // raw is always stored; parsed fields may be null if type unknown.
     const { error: readingErr } = await supabase
       .from('sensor_readings')
       .insert({
@@ -137,12 +193,20 @@ Deno.serve(async (req: Request) => {
     } else {
       const fixInfo = parsed.lat != null ? `GPS ${parsed.lat},${parsed.lng}` : 'No GPS fix'
       const batInfo = parsed.battery_pct != null ? ` bat=${parsed.battery_pct}%` : ''
-      console.log(`ingest: saved reading for device ${devEui} (${device.active ? 'active' : 'unregistered'}) [${fixInfo}${batInfo}]${primaryGateway ? ` via gw ${primaryGateway}` : ''}`)
+      console.log(`ingest: [${platform}] saved reading for ${devEui} (${device.active ? 'active' : 'unregistered'}) [${fixInfo}${batInfo}]${primaryGateway ? ` via gw ${primaryGateway}` : ''}`)
     }
 
-    // ── Auto-discover routing devices (gateways) from rx_metadata ─
+    // ── Update integration counters ─────────────────────────────────
+    await supabase
+      .from('property_integrations')
+      .update({
+        last_message_at: new Date().toISOString(),
+        message_count: (integration.message_count ?? 0) + 1,
+      })
+      .eq('id', integration.id)
+
+    // ── Auto-discover routing devices (gateways) from TTN rx_metadata
     if (gatewayIds.length > 0) {
-      // Look up the 'LoRaWAN Gateway' routing device type (cached per warm instance)
       if (!_routingTypeId) {
         const { data: gwType } = await supabase
           .from('device_types')
@@ -153,14 +217,10 @@ Deno.serve(async (req: Request) => {
         _routingTypeId = gwType?.id ?? null
       }
 
-      // Use reporting device's property_id so gateway passes RLS
-      const gwPropertyId = device.property_id ?? null
+      const gwPropertyId = device.property_id ?? propertyId
 
       for (const gw of gatewayIds) {
-        // Use EUI as the unique device identifier; fall back to gateway_id
         const gwDevEui = gw.eui ?? gw.gatewayId
-
-        // Skip if we've already seen this gateway in this warm instance
         if (_knownGateways.has(gwDevEui)) continue
 
         const { data: existing } = await supabase
@@ -186,13 +246,12 @@ Deno.serve(async (req: Request) => {
                 eui: gw.eui,
               },
             })
-          if (gwErr && gwErr.code !== '23505') { // 23505 = unique violation (race)
+          if (gwErr && gwErr.code !== '23505') {
             console.error(`ingest: failed to auto-register gateway ${gwDevEui}`, gwErr)
           } else {
             console.log(`ingest: auto-discovered gateway ${gwDevEui} (gw_id: ${gw.gatewayId})`)
           }
         } else if (!existing.property_id && gwPropertyId) {
-          // Gateway exists but has no property — adopt it into this property
           await supabase
             .from('devices')
             .update({ property_id: gwPropertyId })
@@ -216,10 +275,18 @@ let _knownGateways = new Set<string>()
 let _routingTypeId: string | null = null
 
 
-// ── dev_eui extraction ──────────────────────────────────────────────────────
-// Add a new network block here when you connect a new network/platform.
+// ══════════════════════════════════════════════════════════════════════════
+// DEVICE ID EXTRACTION (platform-specific)
+// ══════════════════════════════════════════════════════════════════════════
 
-function extractDevEui(body: Record<string, unknown>): string | null {
+function extractDeviceId(body: Record<string, unknown>, platform: string): string | null {
+  if (platform === 'ttn')   return extractTtnDevEui(body)
+  if (platform === 'blues') return extractBluesDeviceId(body)
+  // 'http' — generic fallback
+  return extractGenericDeviceId(body)
+}
+
+function extractTtnDevEui(body: Record<string, unknown>): string | null {
   // TTN v3: payload wrapped under body.data (standard TTN webhook format)
   const ttnData = body?.data as Record<string, unknown> | undefined
   const ttnIds  = ttnData?.end_device_ids as Record<string, unknown> | undefined
@@ -229,18 +296,29 @@ function extractDevEui(body: Record<string, unknown>): string | null {
   const flatIds = body?.end_device_ids as Record<string, unknown> | undefined
   if (flatIds?.dev_eui) return String(flatIds.dev_eui).toLowerCase()
 
-  // Direct HTTP (custom devices posting their own ID)
+  return null
+}
+
+function extractBluesDeviceId(body: Record<string, unknown>): string | null {
+  // Blues Notehub route payload: { device: "dev:864475XXXXXXXXX", ... }
+  if (body?.device) return String(body.device).toLowerCase()
+  // Fallback: serial number
+  if (body?.sn) return String(body.sn).toLowerCase()
+  return null
+}
+
+function extractGenericDeviceId(body: Record<string, unknown>): string | null {
   if (body?.dev_eui)    return String(body.dev_eui).toLowerCase()
   if (body?.device_eui) return String(body.device_eui).toLowerCase()
   if (body?.deviceEui)  return String(body.deviceEui).toLowerCase()
-
+  if (body?.device_id)  return String(body.device_id).toLowerCase()
   return null
 }
 
 
-// ── Gateway extraction ──────────────────────────────────────────────────────
-// Parses rx_metadata from TTN uplinks to identify which gateways relayed
-// the message. Returns sorted by RSSI descending (strongest first).
+// ══════════════════════════════════════════════════════════════════════════
+// GATEWAY EXTRACTION (TTN only)
+// ══════════════════════════════════════════════════════════════════════════
 
 interface GatewayInfo {
   gatewayId: string
@@ -271,10 +349,9 @@ function extractGatewayIds(body: Record<string, unknown>): GatewayInfo[] {
 }
 
 
-// ── Payload parsers ─────────────────────────────────────────────────────────
-// Pattern-matched by decoded_payload field names so auto-registered devices
-// (no type yet) still parse correctly. Ordered most-specific first.
-// Field names sourced from TTN Device Repository codec YAML definitions.
+// ══════════════════════════════════════════════════════════════════════════
+// PAYLOAD PARSERS
+// ══════════════════════════════════════════════════════════════════════════
 
 interface ParsedReading {
   device_time?: string | null
@@ -286,6 +363,63 @@ interface ParsedReading {
   extra?:       Record<string, unknown> | null
 }
 
+
+// ── Blues Wireless parser ────────────────────────────────────────────────
+// Notehub route payloads: { device, body, best_location, voltage, when, ... }
+
+function parseBluesPayload(body: Record<string, unknown>): ParsedReading {
+  const sensorBody = body?.body as Record<string, unknown> | undefined
+  const bestLoc = body?.best_location as Record<string, unknown> | undefined
+
+  // GPS from best_location
+  let lat: number | null = null
+  let lng: number | null = null
+  if (bestLoc?.lat != null && bestLoc?.lon != null) {
+    lat = Number(bestLoc.lat)
+    lng = Number(bestLoc.lon)
+  }
+
+  // Battery: Blues reports voltage (typical LiPo 2.5–4.2V range)
+  let battery_pct: number | null = null
+  if (body?.voltage != null) {
+    const v = Number(body.voltage)
+    battery_pct = Math.max(0, Math.min(100, Math.round(((v - 2.5) / 1.7) * 100)))
+  }
+
+  // Timestamp
+  const device_time = body?.when != null
+    ? new Date(Number(body.when) * 1000).toISOString()
+    : null
+
+  // RSSI / SNR from Blues tower metadata (if available)
+  const rssi = body?.rssi != null ? Number(body.rssi) : null
+  const snr  = body?.snr  != null ? Number(body.snr)  : null
+
+  // Extra: all sensor body fields + location type
+  const extra: Record<string, unknown> = {}
+  if (sensorBody) {
+    for (const [k, v] of Object.entries(sensorBody)) {
+      extra[k] = v
+    }
+  }
+  if (body?.best_location_type) extra.location_type = body.best_location_type
+  if (body?.best_location_when) extra.location_when = body.best_location_when
+
+  return {
+    device_time,
+    lat, lng,
+    battery_pct,
+    rssi, snr,
+    extra: Object.keys(extra).length ? extra : null,
+  }
+}
+
+
+// ── TTN payload parser ──────────────────────────────────────────────────
+// Pattern-matched by decoded_payload field names so auto-registered devices
+// (no type yet) still parse correctly. Ordered most-specific first.
+// Field names sourced from TTN Device Repository codec YAML definitions.
+
 // Helper: estimate battery % from Dragino voltage (typical 2.5–3.6V range)
 function draginoBatPct(dp: Record<string, unknown>): number | null {
   const v = dp?.Bat != null ? Number(dp.Bat) : null
@@ -293,7 +427,7 @@ function draginoBatPct(dp: Record<string, unknown>): number | null {
   return Math.min(Math.round(((v - 2.5) / 1.1) * 100), 100)
 }
 
-function parsePayload(body: Record<string, unknown>, deviceTypeId: string | null): ParsedReading {
+function parseTtnPayload(body: Record<string, unknown>, deviceTypeId: string | null): ParsedReading {
   // TTN v3 wraps the actual message under body.data
   const ttnData = body?.data as Record<string, unknown> | undefined
   const ttnMsg  = (ttnData?.uplink_message ?? body?.uplink_message) as Record<string, unknown> | undefined
@@ -397,14 +531,12 @@ function parsePayload(body: Record<string, unknown>, deviceTypeId: string | null
     // Newer codec: fix_tech ("gnss"|"wifi"|"ble"|"none"), device_type: "sensecap_t1000",
     //              battery_pct, battery_v — coordinates in uplink_message.locations
     if (dp.device_type === 'sensecap_t1000' || dp.has_fix != null || (dp.battery_pct != null && dp.fix_tech != null)) {
-      // Determine GPS fix from either codec version
       const fixTech = dp.fix_tech as string | undefined
       const hasFix = dp.has_fix === true || (fixTech != null && fixTech !== 'none' && fixTech !== '')
       let lat: number | null = null
       let lng: number | null = null
 
       if (hasFix) {
-        // Older codec: lat/lon in decoded_payload
         lat = dp.lat != null ? Number(dp.lat) : (dp.latitude != null ? Number(dp.latitude) : null)
         lng = dp.lon != null ? Number(dp.lon) : (dp.longitude != null ? Number(dp.longitude) : null)
       }
