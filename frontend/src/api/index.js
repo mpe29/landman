@@ -764,6 +764,54 @@ export const api = {
   },
 
   // ---------------------------------------------------------------
+  // Integrations (webhook management)
+  // ---------------------------------------------------------------
+
+  async getIntegrations(propertyId) {
+    const { data, error } = await supabase
+      .from('property_integrations')
+      .select('*')
+      .eq('property_id', propertyId)
+      .order('created_at')
+    if (error) throw error
+    return data
+  },
+
+  async createIntegration({ propertyId, platform, label }) {
+    const { data, error } = await supabase.functions.invoke('manage-integration', {
+      body: { action: 'create', propertyId, platform, label },
+    })
+    if (error) throw new Error(error.message || 'Failed to create integration')
+    if (data?.error) throw new Error(data.error)
+    return data // { id, webhookUrl, token }
+  },
+
+  async rotateIntegrationToken(integrationId) {
+    const { data, error } = await supabase.functions.invoke('manage-integration', {
+      body: { action: 'rotate', integrationId },
+    })
+    if (error) throw new Error(error.message || 'Failed to rotate token')
+    if (data?.error) throw new Error(data.error)
+    return data // { id, webhookUrl, token }
+  },
+
+  async deleteIntegration(integrationId) {
+    const { data, error } = await supabase.functions.invoke('manage-integration', {
+      body: { action: 'delete', integrationId },
+    })
+    if (error) throw new Error(error.message || 'Failed to delete integration')
+    if (data?.error) throw new Error(data.error)
+  },
+
+  async toggleIntegration(integrationId, enabled) {
+    const { error } = await supabase
+      .from('property_integrations')
+      .update({ enabled })
+      .eq('id', integrationId)
+    if (error) throw error
+  },
+
+  // ---------------------------------------------------------------
   // Deletes
   // ---------------------------------------------------------------
   async deleteArea(id) {

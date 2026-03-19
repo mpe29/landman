@@ -18,7 +18,7 @@ const MENU_ITEMS = [
   { id: 'logout',       label: 'Log Out' },
 ]
 
-export default function MainMenu({ isOpen, onOpen, onLogout, isAdmin, pendingCount, onUserManagement, onProfile, userName }) {
+export default function MainMenu({ isOpen, onOpen, onLogout, isAdmin, pendingCount, onUserManagement, onProfile, onIntegrations, userName }) {
   const ref = useRef(null)
 
   // Close on outside click
@@ -33,6 +33,7 @@ export default function MainMenu({ isOpen, onOpen, onLogout, isAdmin, pendingCou
     if (item.id === 'logout')  { onLogout?.(); return }
     if (item.id === 'users')   { onUserManagement?.(); return }
     if (item.id === 'profile') { onProfile?.(); return }
+    if (item.id === 'integrations') { onIntegrations?.(); return }
     onOpen() // close menu for unimplemented items
   }
 
