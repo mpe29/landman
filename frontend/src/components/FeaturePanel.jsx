@@ -532,10 +532,10 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, onE
           </button>
         )}
 
-        {(featureType === 'area' || featureType === 'property') && onEditBoundary && data._geometry && (
+        {(featureType === 'area' || featureType === 'property') && onEditBoundary && data.id && (
           <button
             style={styles.editBoundaryBtn}
-            onClick={() => onEditBoundary({ featureType, id: data.id, name: data.name, boundary: data._geometry })}
+            onClick={() => onEditBoundary({ featureType, id: data.id, name: data.name })}
           >
             Edit Boundary
           </button>
