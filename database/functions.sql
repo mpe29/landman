@@ -46,7 +46,7 @@ BEGIN
                       END
     );
 END;
-$$ LANGUAGE plpgsql VOLATILE SECURITY DEFINER;
+$$ LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public;
 
 -- ---------------------------------------------------------------
 -- Areas (farms, camps, paddocks, habitat zones, etc.)
@@ -211,10 +211,16 @@ CREATE OR REPLACE FUNCTION create_observation(
 RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
     v_id UUID;
 BEGIN
+    -- Verify caller has access to this property (SECURITY DEFINER bypasses RLS)
+    IF NOT user_has_property_access(p_property_id) THEN
+        RAISE EXCEPTION 'Access denied: you do not have access to this property';
+    END IF;
+
     INSERT INTO observations (
         property_id, operation_id, geom,
         observed_at, type, notes, image_url, bearing, image_hash, created_by
