@@ -209,6 +209,8 @@ export default function Map({
   onMapClick,
   onMapBackground,
   onContextMenu: onContextMenuProp,
+  deviceCategoryFilter,
+  onViewportDevices,
 }) {
   const mapContainer     = useRef(null)
   const map              = useRef(null)
@@ -216,10 +218,12 @@ export default function Map({
   const obsModeRef       = useRef('individual')  // shadow for layerVisibility effect
   const deviceModeRef    = useRef('individual')  // shadow for layerVisibility effect
   const onFeatureClickRef  = useRef(onFeatureClick) // always-current ref (avoids stale closure)
+  const deviceCatFilterRef = useRef(deviceCategoryFilter)
   const onMapClickRef      = useRef(onMapClick)
   const onMapBackgroundRef = useRef(onMapBackground)
   const onContextMenuRef   = useRef(onContextMenuProp)
   const onViewportObsRef = useRef(onViewportObs)
+  const onViewportDevicesRef = useRef(onViewportDevices)
   const onDrawUpdateRef  = useRef(onDrawUpdate)
   const modeRef          = useRef(mode)          // always-current mode for event listeners
   const gpsWatchRef      = useRef(null)
@@ -237,7 +241,24 @@ export default function Map({
   useEffect(() => { onMapClickRef.current = onMapClick }, [onMapClick])
   useEffect(() => { onMapBackgroundRef.current = onMapBackground }, [onMapBackground])
   useEffect(() => { onContextMenuRef.current = onContextMenuProp }, [onContextMenuProp])
+  useEffect(() => {
+    deviceCatFilterRef.current = deviceCategoryFilter
+    // Re-apply visibility to existing markers when category filter changes
+    Object.entries(deviceMarkersRef.current).forEach(([id, marker]) => {
+      const dData = deviceDataRef.current[id]
+      if (!dData) return
+      const cat = dData.device_type_category || 'other'
+      const catHidden = deviceCategoryFilter && !deviceCategoryFilter.includes(cat)
+      const el = marker.getElement()
+      if (catHidden || deviceModeRef.current === 'hidden' || !deviceVisRef.current) {
+        el.style.display = 'none'
+      } else {
+        el.style.display = ''
+      }
+    })
+  }, [deviceCategoryFilter])
   useEffect(() => { onViewportObsRef.current  = onViewportObs  }, [onViewportObs])
+  useEffect(() => { onViewportDevicesRef.current = onViewportDevices }, [onViewportDevices])
   useEffect(() => { onDrawUpdateRef.current   = onDrawUpdate   }, [onDrawUpdate])
   useEffect(() => { modeRef.current           = mode           }, [mode])
 
@@ -622,6 +643,22 @@ export default function Map({
       map.current.on('sourcedata', (e) => {
         if (e.sourceId === 'observations' && e.isSourceLoaded) reportViewportObs()
       })
+
+      // ── Viewport device reporting for DeviceStrip ──────────
+      const reportViewportDevices = () => {
+        if (!onViewportDevicesRef.current) return
+        const bounds = map.current.getBounds()
+        const ids = new Set()
+        Object.entries(deviceDataRef.current).forEach(([id, d]) => {
+          const lat = d.lat ?? d.last_lat
+          const lng = d.lng ?? d.last_lng
+          if (lat != null && lng != null && bounds.contains([lng, lat])) {
+            ids.add(id)
+          }
+        })
+        onViewportDevicesRef.current(ids)
+      }
+      map.current.on('moveend', reportViewportDevices)
 
       setReady(true)
       onMapReady?.(map.current)
@@ -1042,7 +1079,10 @@ export default function Map({
           marker.getElement().className = `${isRouting ? 'routing-dot' : 'device-dot'} ${status}`
         }
         const el = deviceMarkersRef.current[d.id].getElement()
-        const hide = !visible || deviceModeRef.current === 'hidden'
+        const catFilter = deviceCatFilterRef.current
+        const cat = d.device_type_category || 'other'
+        const catHidden = catFilter && !catFilter.includes(cat)
+        const hide = !visible || deviceModeRef.current === 'hidden' || catHidden
         if (hide) {
           el.style.display = 'none'
         } else {

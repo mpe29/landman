@@ -9,37 +9,97 @@ export const supabase = createClient(
 // Thumbnail generation — create a small JPEG alongside the full-res original.
 // Used by ImageStrip / FeaturePanel so browsers download ~20–40 KB instead of
 // the full 3–12 MB original.  Lightbox still loads the original URL.
+// Reads EXIF orientation from the file and applies correct canvas transforms
+// so portrait photos taken on mobile don't appear rotated in thumbnails.
 // ---------------------------------------------------------------------------
 const THUMB_MAX = 400
 const THUMB_QUALITY = 0.70
 
+/** Read EXIF orientation (1–8) from the first 64 KB of a File/Blob. */
+function readExifOrientation(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const view = new DataView(e.target.result)
+      // Check for JPEG SOI marker
+      if (view.byteLength < 2 || view.getUint16(0) !== 0xFFD8) return resolve(1)
+      let offset = 2
+      while (offset < view.byteLength - 1) {
+        const marker = view.getUint16(offset)
+        offset += 2
+        if (marker === 0xFFE1) {
+          // APP1 — EXIF data
+          const segLen = view.getUint16(offset)
+          // 'Exif\0\0' header check
+          if (view.getUint32(offset + 2) !== 0x45786966) return resolve(1)
+          const tiffStart = offset + 8
+          const bigEndian = view.getUint16(tiffStart) === 0x4D4D
+          const ifdOffset = view.getUint32(tiffStart + 4, !bigEndian)
+          const numEntries = view.getUint16(tiffStart + ifdOffset, !bigEndian)
+          for (let i = 0; i < numEntries; i++) {
+            const entryOffset = tiffStart + ifdOffset + 2 + i * 12
+            if (entryOffset + 12 > view.byteLength) break
+            if (view.getUint16(entryOffset, !bigEndian) === 0x0112) {
+              return resolve(view.getUint16(entryOffset + 8, !bigEndian))
+            }
+          }
+          return resolve(1)
+        } else if ((marker & 0xFF00) === 0xFF00) {
+          offset += view.getUint16(offset)
+        } else {
+          break
+        }
+      }
+      resolve(1)
+    }
+    reader.onerror = () => resolve(1)
+    reader.readAsArrayBuffer(file.slice(0, 65536))
+  })
+}
+
 function createThumbnail(file) {
   return new Promise((resolve) => {
     if (!file.type.startsWith('image/')) return resolve(null)
-    const img = new Image()
-    const url = URL.createObjectURL(file)
-    img.onload = () => {
-      URL.revokeObjectURL(url)
-      let { width, height } = img
-      const scale = THUMB_MAX / Math.max(width, height)
-      if (scale >= 1) {
-        // Image already small — just use it as its own thumbnail
-        return resolve(null)
+    readExifOrientation(file).then((orientation) => {
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+      img.onload = () => {
+        URL.revokeObjectURL(url)
+        let { width: iw, height: ih } = img
+        const scale = THUMB_MAX / Math.max(iw, ih)
+        if (scale >= 1) return resolve(null)
+        const sw = Math.round(iw * scale)
+        const sh = Math.round(ih * scale)
+
+        // Orientations 5–8 swap width/height
+        const swapped = orientation >= 5 && orientation <= 8
+        const canvas = document.createElement('canvas')
+        canvas.width = swapped ? sh : sw
+        canvas.height = swapped ? sw : sh
+        const ctx = canvas.getContext('2d')
+
+        // Apply EXIF transform
+        switch (orientation) {
+          case 2: ctx.transform(-1, 0, 0, 1, sw, 0); break                    // flip H
+          case 3: ctx.transform(-1, 0, 0, -1, sw, sh); break                  // rotate 180
+          case 4: ctx.transform(1, 0, 0, -1, 0, sh); break                    // flip V
+          case 5: ctx.transform(0, 1, 1, 0, 0, 0); break                      // transpose
+          case 6: ctx.transform(0, 1, -1, 0, sh, 0); break                    // rotate 90 CW
+          case 7: ctx.transform(0, -1, -1, 0, sh, sw); break                  // transverse
+          case 8: ctx.transform(0, -1, 1, 0, 0, sw); break                    // rotate 90 CCW
+          default: break                                                        // orientation 1 = normal
+        }
+
+        ctx.drawImage(img, 0, 0, sw, sh)
+        canvas.toBlob(
+          (blob) => resolve(blob || null),
+          'image/jpeg',
+          THUMB_QUALITY,
+        )
       }
-      width = Math.round(width * scale)
-      height = Math.round(height * scale)
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
-      canvas.getContext('2d').drawImage(img, 0, 0, width, height)
-      canvas.toBlob(
-        (blob) => resolve(blob || null),
-        'image/jpeg',
-        THUMB_QUALITY,
-      )
-    }
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
-    img.src = url
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+      img.src = url
+    })
   })
 }
 
@@ -80,8 +140,8 @@ export const api = {
     return supabase.auth.onAuthStateChange(callback)
   },
 
-  async getProfile() {
-    const { data, error } = await supabase.from('profiles').select('*').single()
+  async getProfile(userId) {
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single()
     if (error) throw error
     return data
   },
@@ -102,21 +162,26 @@ export const api = {
     if (error) throw error
   },
 
-  async uploadProfileImage(file, fieldName) {
+  // Admin updates another user's profile via secure RPC
+  async updateProfileById(userId, updates) {
+    const { data, error } = await supabase.rpc('update_user_profile', {
+      p_user_id: userId,
+      p_updates: updates,
+    })
+    if (error) throw error
+    return data
+  },
+
+  async uploadProfileImage(file, fieldName, targetUserId) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) throw new Error('Not authenticated')
+    const ownerId = targetUserId || user.id
     const ext = file.name.split('.').pop() || 'jpg'
-    const path = `${user.id}/${fieldName}.${ext}`
+    const path = `${ownerId}/${fieldName}.${ext}`
     const { error: uploadErr } = await supabase.storage
       .from('profile-images')
       .upload(path, file, { upsert: true, contentType: file.type })
     if (uploadErr) throw uploadErr
-    // Private bucket — use signed URL (1 hour expiry)
-    const { data: signedData, error: signErr } = await supabase.storage
-      .from('profile-images')
-      .createSignedUrl(path, 3600)
-    if (signErr) throw signErr
-    // Store the path, not the signed URL — we'll generate fresh signed URLs on read
     return path
   },
 
@@ -661,7 +726,7 @@ export const api = {
   async getDevices() {
     const { data, error } = await supabase
       .from('devices')
-      .select('*, device_types(name, category, icon)')
+      .select('*, device_types(name, category, icon, image_url)')
       .order('active', { ascending: false })
       .order('last_seen_at', { ascending: false, nullsFirst: false })
     if (error) throw error
@@ -762,6 +827,66 @@ export const api = {
       .update({ last_lat: lat, last_lng: lng })
       .eq('id', id)
     if (error) throw error
+  },
+
+  // ---------------------------------------------------------------
+  // Device images
+  // ---------------------------------------------------------------
+
+  async uploadDeviceImage(deviceId, file) {
+    const ext = file.name.split('.').pop().toLowerCase()
+    const path = `${deviceId}/custom.${ext}`
+
+    // Upload full-res
+    const { error } = await supabase.storage
+      .from('device-images')
+      .upload(path, file, { upsert: true })
+    if (error) throw error
+    const { data } = supabase.storage.from('device-images').getPublicUrl(path)
+
+    // Upload thumbnail (best-effort)
+    createThumbnail(file).then((blob) => {
+      if (!blob) return
+      supabase.storage
+        .from('device-images')
+        .upload(`${deviceId}/thumb.jpg`, blob, { upsert: true, contentType: 'image/jpeg' })
+        .catch(() => {})
+    })
+
+    return data.publicUrl
+  },
+
+  /** Returns the best thumbnail URL for a device: custom photo > type product image > null */
+  getDeviceThumbUrl(device) {
+    if (!device) return null
+    // Check for custom image in metadata
+    const customImage = device.metadata?.custom_image
+    if (customImage) {
+      // Derive thumb URL: {deviceId}/thumb.jpg
+      const { data } = supabase.storage.from('device-images').getPublicUrl(`${device.id}/thumb.jpg`)
+      return data.publicUrl
+    }
+    // Fall back to device type product image
+    if (device.device_types?.image_url) {
+      const { data } = supabase.storage.from('device-images').getPublicUrl(device.device_types.image_url)
+      return data.publicUrl
+    }
+    return null
+  },
+
+  /** Returns the full-res URL for a device's custom image */
+  getDeviceFullImageUrl(device) {
+    if (!device) return null
+    const customImage = device.metadata?.custom_image
+    if (customImage) {
+      const { data } = supabase.storage.from('device-images').getPublicUrl(customImage)
+      return data.publicUrl
+    }
+    if (device.device_types?.image_url) {
+      const { data } = supabase.storage.from('device-images').getPublicUrl(device.device_types.image_url)
+      return data.publicUrl
+    }
+    return null
   },
 
   // ---------------------------------------------------------------

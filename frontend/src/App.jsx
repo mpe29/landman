@@ -10,7 +10,7 @@ import ObservationModal from './components/ObservationModal'
 import ObservationFilterPanel from './components/ObservationFilterPanel'
 import FeaturePanel from './components/FeaturePanel'
 import DevicesPanel from './components/DevicesPanel'
-import ImageStrip, { STRIP_HEIGHT, COLLAPSED_H } from './components/ImageStrip'
+import BottomStrip, { STRIP_HEIGHT, COLLAPSED_H } from './components/BottomStrip'
 import Lightbox from './components/Lightbox'
 import LoginScreen from './components/LoginScreen'
 import JoinScreen from './components/JoinScreen'
@@ -90,7 +90,8 @@ export default function App() {
   // ── Viewport observations (for ImageStrip) ─────────────────
   const [viewportObs, setViewportObs] = useState([])
   const [lightboxObs, setLightboxObs] = useState(null)
-  const [stripCollapsed, setStripCollapsed] = useState(false)
+  const [stripMode, setStripMode] = useState('photos') // 'photos' | 'devices' | 'hidden'
+  const stripCollapsed = stripMode === 'hidden'
   const [hoverLine, setHoverLine] = useState(null)
   const mapInstanceRef = useRef(null)
 
@@ -115,7 +116,70 @@ export default function App() {
     }, 200)
   }, [loadedData.observations])
 
-  const showImageStrip = obsMode !== 'hidden' && mode === 'view'
+  const showBottomStrip = mode === 'view'
+
+  // Devices for the strip (fetched at app level for BottomStrip)
+  const [stripDevices, setStripDevices] = useState([])
+  const [trailDeviceIds, setTrailDeviceIds] = useState(new Set())
+  const [viewportDeviceOnly, setViewportDeviceOnly] = useState(false)
+  const [viewportDeviceIds, setViewportDeviceIds] = useState(null) // Set or null
+
+  const handleStripToggle = useCallback(() => {
+    setStripMode((m) => m === 'photos' ? 'devices' : m === 'devices' ? 'hidden' : 'photos')
+  }, [])
+
+  const handleDeviceStripHover = useCallback((info) => {
+    if (!info || !mapInstanceRef.current) { setHoverLine(null); return }
+    const { device, x, y } = info
+    const lat = device.last_lat
+    const lng = device.last_lng
+    if (lat == null || lng == null) { setHoverLine(null); return }
+    const dot = mapInstanceRef.current.project([lng, lat])
+    setHoverLine({ thumbX: x, thumbY: y, dotX: dot.x, dotY: dot.y })
+  }, [])
+
+  const handleToggleDeviceTrail = useCallback((deviceId) => {
+    setTrailDeviceIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(deviceId)) next.delete(deviceId)
+      else next.add(deviceId)
+      // Auto-fetch trail data after toggling
+      if (next.size > 0) {
+        const ids = Array.from(next)
+        const now = new Date()
+        const range = deviceFilter.range || 'today'
+        let from
+        if (range === 'today') from = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+        else if (range === '7d') from = new Date(now.getTime() - 7 * 86400000).toISOString()
+        else from = new Date(now.getTime() - 30 * 86400000).toISOString()
+        const to = now.toISOString()
+        api.getDeviceReadingsForDevices(ids, from, to)
+          .then((readings) => {
+            const hourFrom = deviceFilter.hourFrom ?? 0
+            const hourTo = deviceFilter.hourTo ?? 24
+            const filtered = readings.filter((r) => {
+              const h = new Date(r.received_at).getHours()
+              return hourFrom <= hourTo ? (h >= hourFrom && h < hourTo) : (h >= hourFrom || h < hourTo)
+            })
+            setDeviceTrailData(filtered)
+            setDeviceFilterActive(true)
+          })
+          .catch(console.error)
+      } else {
+        setDeviceTrailData([])
+        setDeviceFilterActive(false)
+      }
+      return next
+    })
+  }, [deviceFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Fetch devices for bottom strip ────────────────────────────
+  useEffect(() => {
+    if (!session) return
+    api.getDevices()
+      .then(setStripDevices)
+      .catch(console.error)
+  }, [session, reloadKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auth effects ────────────────────────────────────────────────
   useEffect(() => {
@@ -263,7 +327,11 @@ export default function App() {
 
   // ── Device filter handlers ──────────────────────────────────────
   const handleDeviceFilterApply = async () => {
-    if (!deviceFilter.deviceIds.length) return
+    // Use trail-toggled device IDs if available, else fall back to filter.deviceIds
+    const ids = trailDeviceIds.size > 0
+      ? Array.from(trailDeviceIds)
+      : (deviceFilter.deviceIds || [])
+    if (ids.length === 0) return
     const now = new Date()
     let from, to
     if (deviceFilter.range === 'today') {
@@ -277,7 +345,7 @@ export default function App() {
       to = now.toISOString()
     }
     try {
-      const readings = await api.getDeviceReadingsForDevices(deviceFilter.deviceIds, from, to)
+      const readings = await api.getDeviceReadingsForDevices(ids, from, to)
       // Client-side time-of-day filter
       const hourFrom = deviceFilter.hourFrom ?? 0
       const hourTo = deviceFilter.hourTo ?? 24
@@ -503,12 +571,14 @@ export default function App() {
         onDataLoaded={handleDataLoaded}
         onFeatureClick={handleFeatureClick}
         onViewportObs={handleViewportObs}
+        onViewportDevices={(ids) => setViewportDeviceIds(ids)}
         onMapReady={handleMapReady}
         selectedObsId={selectedFeature?.featureType === 'observation' ? selectedFeature.data?.id : null}
         obsMode={obsMode}
         deviceMode={deviceMode}
         deviceTrailData={deviceTrailData}
         deviceFilterActive={deviceFilterActive}
+        deviceCategoryFilter={deviceFilter?.categories || null}
         onMapClick={placingRouting ? handleMapClickForPlacement : null}
         onMapBackground={handleMapBackground}
         onContextMenu={handleContextMenu}
@@ -567,7 +637,7 @@ export default function App() {
       />
 
       {/* ── Bottom-left: stacked panels (only one open at a time) ── */}
-      <div style={{ ...stackStyle, bottom: showImageStrip && !stripCollapsed ? STRIP_HEIGHT + 2 : 32 }}>
+      <div style={{ ...stackStyle, bottom: showBottomStrip && stripMode !== 'hidden' ? STRIP_HEIGHT + 2 : 32 }}>
         <Toolbar
           mode={mode}
           onModeChange={handleModeChange}
@@ -600,8 +670,8 @@ export default function App() {
             onFilterApply={handleDeviceFilterApply}
             onFilterClear={handleDeviceFilterClear}
             deviceFilterActive={deviceFilterActive}
-            onPlaceRouting={handlePlaceRouting}
-            areas={loadedData.camps || []}
+            viewportOnly={viewportDeviceOnly}
+            onToggleViewport={() => setViewportDeviceOnly((v) => !v)}
           />
           <button
             style={{ ...heatBtnStyle, ...(deviceMode !== 'hidden' ? devBtnOnStyle : dimBtnStyle) }}
@@ -675,9 +745,14 @@ export default function App() {
           propertyId={loadedData.properties[0]?.id}
           tagTypes={tagTypes}
           onClose={() => setSelectedFeature(null)}
-          onSaved={() => { reload(); setSelectedFeature(null) }}
+          onSaved={() => { reload() }}
           onDeleted={() => { reload(); setSelectedFeature(null) }}
           onEditBoundary={handleEditBoundary}
+          onPlaceRouting={handlePlaceRouting}
+          onShowTrail={(deviceId) => {
+            setDeviceFilter((f) => ({ ...f, deviceIds: [deviceId] }))
+            handleDeviceFilterApply()
+          }}
         />
       )}
 
@@ -691,16 +766,33 @@ export default function App() {
         />
       )}
 
-      {/* Bottom image strip — viewport-filtered observations */}
-      {showImageStrip && (
-        <ImageStrip
+      {/* Bottom strip — photos / devices / hidden */}
+      {mode === 'view' && (
+        <BottomStrip
+          mode={stripMode}
+          onToggleMode={handleStripToggle}
           observations={viewportObs}
           selectedObsId={selectedFeature?.featureType === 'observation' ? selectedFeature.data?.id : null}
-          onSelect={(obs) => handleFeatureClick({ featureType: 'observation', data: obs })}
+          onSelectObs={(obs) => handleFeatureClick({ featureType: 'observation', data: obs })}
           onImageClick={(obs) => setLightboxObs(obs)}
-          collapsed={stripCollapsed}
-          onToggleCollapse={() => setStripCollapsed((c) => !c)}
-          onHover={handleStripHover}
+          onHoverObs={handleStripHover}
+          devices={(() => {
+            let devs = stripDevices
+            if (deviceFilter?.categories) {
+              devs = devs.filter((d) => deviceFilter.categories.includes(d.device_types?.category || 'other'))
+            }
+            if (viewportDeviceOnly && viewportDeviceIds) {
+              devs = devs.filter((d) => viewportDeviceIds.has(d.id))
+            }
+            return devs
+          })()}
+          selectedDeviceId={selectedFeature?.featureType === 'device' ? selectedFeature.data?.id : null}
+          onSelectDevice={(d) => {
+            handleFeatureClick({ featureType: 'device', data: d })
+          }}
+          onHoverDevice={handleDeviceStripHover}
+          trailDeviceIds={trailDeviceIds}
+          onToggleTrail={handleToggleDeviceTrail}
         />
       )}
 
