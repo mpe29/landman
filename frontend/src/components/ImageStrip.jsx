@@ -25,7 +25,7 @@ const PAD = 16
  * Renders viewport-filtered thumbnails (typically 10–30 at a time).
  * Sorted newest-right, scrollable left for older images.
  */
-export default function ImageStrip({ observations, selectedObsId, onSelect, onImageClick, collapsed, onToggleCollapse, onHover }) {
+export default function ImageStrip({ observations, selectedObsId, onSelect, onImageClick, collapsed, onToggleCollapse, onHover, hideToggle }) {
   const scrollRef = useRef(null)
   useEffect(() => { injectStripCss() }, [])
   const [hoveredId, setHoveredId] = useState(null)
@@ -49,6 +49,53 @@ export default function ImageStrip({ observations, selectedObsId, onSelect, onIm
   }, [selectedObsId, collapsed, withImages])
 
   if (withImages.length === 0) return null
+
+  // When rendered inside BottomStrip, skip the wrapper and toggle (parent provides them)
+  if (hideToggle) {
+    return (
+      <div
+        ref={scrollRef}
+        className="image-strip-scroll"
+        style={s.scroll}
+      >
+        <div style={{ display: 'flex', gap: GAP, padding: `0 ${PAD}px`, height: THUMB_H }}>
+          {withImages.map((obs) => {
+            const isSelected = obs.id === selectedObsId
+            const isHovered = obs.id === hoveredId
+            const date = new Date(obs.observed_at)
+            const dateStr = date.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: '2-digit' })
+            return (
+              <div
+                key={obs.id}
+                data-obs-id={obs.id}
+                style={{
+                  ...s.thumb,
+                  flexShrink: 0,
+                  ...(isSelected ? s.thumbSelected : {}),
+                  ...(isHovered && !isSelected ? s.thumbHover : {}),
+                }}
+                onClick={() => { onSelect(obs); onImageClick(obs) }}
+                onMouseEnter={(e) => {
+                  setHoveredId(obs.id)
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  onHover?.({ obs, x: rect.left + rect.width / 2, y: rect.top })
+                }}
+                onMouseLeave={() => { setHoveredId(null); onHover?.(null) }}
+              >
+                <img
+                  src={thumbUrl(obs.image_url)}
+                  onError={(e) => { if (e.target.src !== obs.image_url) e.target.src = obs.image_url }}
+                  alt="" style={s.img} loading="lazy"
+                />
+                <div style={s.dateBadge}>{dateStr}</div>
+                {isSelected && <div style={s.selectedBorder} />}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ ...s.wrap, height: collapsed ? COLLAPSED_H : STRIP_HEIGHT }}>

@@ -33,13 +33,28 @@ function timeAgo(ts) {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
-function DeviceFeaturePanel({ data, onClose }) {
+function DeviceFeaturePanel({ data, onClose, onPlaceRouting, onShowTrail, onSaved, areas }) {
   const [readings, setReadings] = useState([])
   const [loading,  setLoading]  = useState(true)
-  const isRouting = data.device_type_category === 'routing'
+  const [deviceTypes, setDeviceTypes] = useState([])
+  const [form, setForm] = useState({ name: data.name || '', notes: data.notes || '', deviceTypeId: data.device_type_id || '', areaId: data.area_id || '' })
+  const [saving, setSaving] = useState(false)
+  const [backfillMsg, setBackfillMsg] = useState(null)
+  const [imageUploading, setImageUploading] = useState(false)
+  const fileInputRef = useRef(null)
+
+  const isRouting = data.device_type_category === 'routing' || data.device_types?.category === 'routing'
+  const hasLocation = (data.last_lat ?? data.lat) != null && (data.last_lng ?? data.lng) != null
 
   useEffect(() => {
+    api.getDeviceTypes().then(setDeviceTypes).catch(console.error)
+  }, [])
+
+  useEffect(() => {
+    setForm({ name: data.name || '', notes: data.notes || '', deviceTypeId: data.device_type_id || '', areaId: data.area_id || '' })
+    setBackfillMsg(null)
     setLoading(true)
+    setReadings([])
     if (isRouting) {
       api.getRoutingLog(data.dev_eui, 20)
         .then(setReadings)
@@ -55,6 +70,49 @@ function DeviceFeaturePanel({ data, onClose }) {
 
   const age    = data.last_seen_at ? Date.now() - new Date(data.last_seen_at).getTime() : Infinity
   const status = data.status ?? (!data.active ? 'inactive' : age < TWO_HOURS_MS ? 'fresh' : 'stale')
+
+  const handleSave = async () => {
+    setSaving(true)
+    setBackfillMsg(null)
+    try {
+      const wasUnregistered = !data.active
+      await api.updateDevice(data.id, {
+        name: form.name.trim() || data.name,
+        notes: form.notes,
+        active: true,
+        deviceTypeId: form.deviceTypeId || null,
+        areaId: form.areaId || null,
+      })
+      if (wasUnregistered || form.deviceTypeId !== (data.device_type_id || '')) {
+        const count = await api.backfillDeviceReadings(data.id)
+        setBackfillMsg(count > 0
+          ? `Backfilled ${count} historic reading${count !== 1 ? 's' : ''}`
+          : 'Registered — no historic readings to backfill'
+        )
+      }
+      onSaved?.()
+    } catch (err) {
+      alert('Save failed: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImageUploading(true)
+    try {
+      await api.uploadDeviceImage(data.id, file)
+      onSaved?.()
+    } catch (err) {
+      alert('Upload failed: ' + err.message)
+    } finally {
+      setImageUploading(false)
+    }
+  }
+
+  const thumbUrl = api.getDeviceThumbUrl?.(data) || null
 
   return (
     <div style={styles.panel}>
@@ -74,6 +132,13 @@ function DeviceFeaturePanel({ data, onClose }) {
         <button style={styles.closeBtn} onClick={onClose}>✕</button>
       </div>
 
+      {/* Device image */}
+      {thumbUrl && (
+        <div style={styles.photoWrap}>
+          <img src={thumbUrl} alt="" style={styles.photo} />
+        </div>
+      )}
+
       {/* Status row */}
       <div style={dv.statusRow}>
         {data.battery_pct != null && (
@@ -82,8 +147,8 @@ function DeviceFeaturePanel({ data, onClose }) {
         {data.last_seen_at && (
           <span style={dv.pill}>{timeAgo(data.last_seen_at)}</span>
         )}
-        {data.lat != null && (
-          <span style={dv.pill}>{Number(data.lat).toFixed(4)}, {Number(data.lng).toFixed(4)}</span>
+        {(data.lat ?? data.last_lat) != null && (
+          <span style={dv.pill}>{Number(data.lat ?? data.last_lat).toFixed(4)}, {Number(data.lng ?? data.last_lng).toFixed(4)}</span>
         )}
         {data.area_name && (
           <span style={dv.pill}>{data.area_name}</span>
@@ -92,6 +157,88 @@ function DeviceFeaturePanel({ data, onClose }) {
 
       {/* EUI */}
       <div style={dv.eui}>{data.dev_eui?.toUpperCase()}</div>
+
+      {/* Editable form fields */}
+      <div style={dv.formSection}>
+        <label style={dv.formLabel}>Device type</label>
+        <select
+          style={dv.formInput}
+          value={form.deviceTypeId}
+          onChange={(e) => setForm((p) => ({ ...p, deviceTypeId: e.target.value }))}
+        >
+          <option value="">— Select type —</option>
+          {deviceTypes.map((dt) => (
+            <option key={dt.id} value={dt.id}>
+              {dt.icon ? `${dt.icon} ` : ''}{dt.name}
+            </option>
+          ))}
+        </select>
+
+        <label style={dv.formLabel}>Name</label>
+        <input
+          style={dv.formInput}
+          value={form.name}
+          onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+        />
+
+        {areas && areas.length > 0 && (
+          <>
+            <label style={dv.formLabel}>Area</label>
+            <select
+              style={dv.formInput}
+              value={form.areaId}
+              onChange={(e) => setForm((p) => ({ ...p, areaId: e.target.value }))}
+            >
+              <option value="">— No area —</option>
+              {areas.map((a) => (
+                <option key={a.id} value={a.id}>{a.name || a.id}</option>
+              ))}
+            </select>
+          </>
+        )}
+
+        <label style={dv.formLabel}>Notes</label>
+        <input
+          style={dv.formInput}
+          value={form.notes}
+          placeholder="Optional"
+          onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
+        />
+
+        <button onClick={handleSave} disabled={saving} style={dv.saveBtn}>
+          {saving ? 'Saving…' : data.active ? 'Save' : 'Register device'}
+        </button>
+
+        {backfillMsg && <div style={dv.backfillMsg}>{backfillMsg}</div>}
+
+        {/* Action buttons */}
+        <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+          {isRouting && (
+            <button onClick={() => onPlaceRouting?.(data)} style={dv.actionBtn}>
+              {hasLocation ? 'Move on Map' : 'Place on Map'}
+            </button>
+          )}
+          {!isRouting && data.active && hasLocation && (
+            <button onClick={() => onShowTrail?.(data.id)} style={dv.actionBtn}>
+              Show Trail
+            </button>
+          )}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={imageUploading}
+            style={dv.actionBtn}
+          >
+            {imageUploading ? 'Uploading…' : 'Upload Photo'}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={handleImageUpload}
+          />
+        </div>
+      </div>
 
       {/* Readings log or Routing log */}
       <div style={dv.logSection}>
@@ -165,6 +312,37 @@ const dv = {
     letterSpacing: '0.06em', padding: '6px 16px 4px',
     flexShrink: 0,
   },
+  formSection: {
+    padding: '8px 16px', flexShrink: 0,
+    borderTop: `1px solid ${T.surfaceBorder}`,
+  },
+  formLabel: {
+    display: 'block', fontSize: 11, color: T.textMuted, marginBottom: 3, marginTop: 8,
+  },
+  formInput: {
+    width: '100%', boxSizing: 'border-box',
+    padding: '5px 8px', fontSize: 12,
+    background: T.surfaceBorder, border: `1px solid ${T.surfaceBorder}`,
+    borderRadius: 6, color: T.text, fontFamily: 'inherit', outline: 'none',
+  },
+  saveBtn: {
+    marginTop: 10, width: '100%', padding: '7px 0',
+    background: T.text, color: '#fff', border: 'none',
+    borderRadius: 6, cursor: 'pointer', fontSize: 12,
+    fontFamily: 'inherit', fontWeight: 600, transition: 'opacity 0.15s',
+  },
+  actionBtn: {
+    flex: 1, padding: '6px 0',
+    background: 'transparent', border: `1px solid ${T.surfaceBorder}`,
+    borderRadius: 6, cursor: 'pointer', fontSize: 11,
+    fontFamily: 'inherit', fontWeight: 600, color: T.textMuted,
+    transition: 'all 0.15s', textAlign: 'center',
+  },
+  backfillMsg: {
+    marginTop: 8, padding: '5px 8px',
+    background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)',
+    borderRadius: 6, fontSize: 11, color: '#15803d',
+  },
   logSection: {
     flex: 1, overflowY: 'hidden',
     display: 'flex', flexDirection: 'column',
@@ -183,7 +361,7 @@ const dv = {
   muted: { fontSize: 12, color: T.textMuted },
 }
 
-export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, onEditBoundary, camps, propertyId, tagTypes = [] }) {
+export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, onEditBoundary, camps, propertyId, tagTypes = [], onPlaceRouting, onShowTrail }) {
   const { featureType, data } = feature
 
   const [name, setName]           = useState(data.name || '')
@@ -314,7 +492,7 @@ export default function FeaturePanel({ feature, onClose, onSaved, onDeleted, onE
 
   // Device features get their own dedicated panel — all hooks above still run
   if (featureType === 'device') {
-    return <DeviceFeaturePanel data={data} onClose={onClose} />
+    return <DeviceFeaturePanel data={data} onClose={onClose} onPlaceRouting={onPlaceRouting} onShowTrail={onShowTrail} onSaved={onSaved} areas={camps} />
   }
 
   return (

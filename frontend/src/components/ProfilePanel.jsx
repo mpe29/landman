@@ -50,7 +50,7 @@ const SENSITIVE_FIELDS = [
 export default function ProfilePanel({ onClose, viewUserId, isOwnProfile }) {
   const [profile, setProfile]       = useState(null)
   const [form, setForm]             = useState({})
-  const [loading, setLoading]       = useState(true)
+  const [loadState, setLoadState]   = useState('loading') // 'loading' | 'loaded' | 'error'
   const [saving, setSaving]         = useState(false)
   const [saveMsg, setSaveMsg]       = useState(null)
   const [imageUrls, setImageUrls]   = useState({}) // resolved signed URLs
@@ -60,46 +60,41 @@ export default function ProfilePanel({ onClose, viewUserId, isOwnProfile }) {
   // Determined from server response
   const [accessLevel, setAccessLevel] = useState(null) // 'self' | 'admin' | 'member'
 
-  const editable = accessLevel === 'self'
+  // Self can always edit; admin can edit non-admin profiles
+  const isAdminEditingNonAdmin = accessLevel === 'admin' && !profile?.is_admin
+  const editable = accessLevel === 'self' || isAdminEditingNonAdmin
   const canSeeSensitive = accessLevel === 'self' || accessLevel === 'admin'
 
-  useEffect(() => {
-    loadProfile()
-  }, [viewUserId])
-
-  const loadProfile = async () => {
-    setLoading(true)
-    try {
-      let data
-      if (isOwnProfile) {
-        // For own profile, use direct query (full access guaranteed by RLS)
-        data = await api.getProfile()
-        data.access_level = 'self'
-      } else {
-        // For other users, use the secure RPC that masks sensitive fields
-        data = await api.getProfileById(viewUserId)
-      }
-
-      if (data) {
-        setProfile(data)
-        setForm({ ...data })
-        setAccessLevel(data.access_level || (isOwnProfile ? 'self' : 'member'))
-
-        // Resolve signed URLs for image fields
-        const urls = {}
-        for (const field of ['selfie_url', 'drivers_license_url']) {
-          if (data[field]) {
-            urls[field] = await api.getProfileImageUrl(data[field])
-          }
-        }
-        setImageUrls(urls)
-      }
-    } catch (err) {
-      console.error('Failed to load profile:', err)
-    } finally {
-      setLoading(false)
+  const reloadProfile = async () => {
+    let data
+    if (isOwnProfile) {
+      data = await api.getProfile(viewUserId)
+      data.access_level = 'self'
+    } else {
+      data = await api.getProfileById(viewUserId)
     }
+    if (data) {
+      setProfile(data)
+      setForm({ ...data })
+      setAccessLevel(data.access_level || (isOwnProfile ? 'self' : 'member'))
+      // Resolve signed URLs in background (don't block loading state)
+      const urls = {}
+      for (const field of ['selfie_url', 'drivers_license_url']) {
+        if (data[field]) {
+          urls[field] = await api.getProfileImageUrl(data[field])
+        }
+      }
+      setImageUrls(urls)
+    }
+    return data
   }
+
+  useEffect(() => {
+    setLoadState('loading')
+    reloadProfile()
+      .then(() => setLoadState('loaded'))
+      .catch((err) => { console.error('Failed to load profile:', err); setLoadState('error') })
+  }, [viewUserId])
 
   const handleChange = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -121,10 +116,12 @@ export default function ProfilePanel({ onClose, viewUserId, isOwnProfile }) {
         }
       }
       if (Object.keys(updates).length > 0) {
-        await api.updateProfile(updates)
-        const refreshed = await api.getProfile()
-        setProfile(refreshed)
-        setForm({ ...refreshed })
+        if (isAdminEditingNonAdmin) {
+          await api.updateProfileById(viewUserId, updates)
+        } else {
+          await api.updateProfile(updates)
+        }
+        await reloadProfile()
       }
       setSaveMsg('Saved')
       setTimeout(() => setSaveMsg(null), 2000)
@@ -140,14 +137,15 @@ export default function ProfilePanel({ onClose, viewUserId, isOwnProfile }) {
     if (!file || !uploadField) return
     try {
       setSaving(true)
-      const storedPath = await api.uploadProfileImage(file, uploadField)
-      await api.updateProfile({ [uploadField]: storedPath })
-      const refreshed = await api.getProfile()
-      setProfile(refreshed)
-      setForm({ ...refreshed })
-      // Refresh signed URL
-      const signedUrl = await api.getProfileImageUrl(storedPath)
-      setImageUrls((prev) => ({ ...prev, [uploadField]: signedUrl }))
+      // When admin uploads for another user, pass their userId
+      const targetUserId = isAdminEditingNonAdmin ? viewUserId : null
+      const storedPath = await api.uploadProfileImage(file, uploadField, targetUserId)
+      if (isAdminEditingNonAdmin) {
+        await api.updateProfileById(viewUserId, { [uploadField]: storedPath })
+      } else {
+        await api.updateProfile({ [uploadField]: storedPath })
+      }
+      await reloadProfile()
       setSaveMsg('Image uploaded')
       setTimeout(() => setSaveMsg(null), 2000)
     } catch (err) {
@@ -192,7 +190,7 @@ export default function ProfilePanel({ onClose, viewUserId, isOwnProfile }) {
             {profile.status === 'pending' && <span style={s.pendingTag}>Pending</span>}
             {accessLevel && accessLevel !== 'self' && (
               <span style={s.accessTag}>
-                {accessLevel === 'admin' ? 'Full view' : 'Limited view'}
+                {isAdminEditingNonAdmin ? 'Editing' : accessLevel === 'admin' ? 'Full view' : 'Limited view'}
               </span>
             )}
           </div>
@@ -200,10 +198,8 @@ export default function ProfilePanel({ onClose, viewUserId, isOwnProfile }) {
 
         {/* Content */}
         <div style={s.content}>
-          {loading ? (
-            <div style={s.empty}>Loading...</div>
-          ) : !profile ? (
-            <div style={s.empty}>Profile not found</div>
+          {loadState !== 'loaded' || !profile ? (
+            <div style={s.empty}>{loadState === 'error' ? 'Profile not found' : 'Loading...'}</div>
           ) : (
             <>
               {allFields.map((section) => (
